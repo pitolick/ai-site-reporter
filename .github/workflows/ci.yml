@@ -6,6 +6,10 @@ on:
   push:
     branches: [develop]
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -18,3 +22,27 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  dependabot-auto-merge:
+    needs: quality
+    if: github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: メタデータ取得
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: patch / dev minor / GitHub Actions minor を自動マージ
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
+           steps.metadata.outputs.dependency-type == 'direct:development') ||
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
+           steps.metadata.outputs.package-ecosystem == 'github_actions')
+        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
