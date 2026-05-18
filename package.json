@@ -1,0 +1,23 @@
+{
+  "name": "@pitolick/ai-site-reporter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "サイト分析・改善提案の汎用 TypeScript ライブラリ",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

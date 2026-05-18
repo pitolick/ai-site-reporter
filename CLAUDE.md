@@ -2,11 +2,11 @@
 
 ## プロジェクト概要
 
-「ええこみ！」ブログ（`e-comi.pitolick.com`）で使用する **汎用サイト分析レポートプラグイン**。
+サイト分析・改善提案の汎用 TypeScript ライブラリ。GA4・Search Console・PageSpeed・AdSense からデータを取得し、Claude API で分析して GitHub Issue 起票 + Slack 通知を行う。
 
-- **ecomi リポジトリのサブモジュール**として `plugins/ai-site-reporter/` に配置される
-- GA4 Data API と Search Console API からデータを取得し、Claude API で分析・改善提案を生成して Slack に送信する
-- ええこみ固有のロジックは含めない。サイト URL・プロパティ ID は設定画面から入力する
+- **e-comi リポジトリ**（`pitolick/ecomi`）のサブモジュールとして `plugins/ai-site-reporter/` に配置される
+- WordPress と連携しない（外部 API → Claude → Issue/Slack のパイプライン）
+- サイト固有設定（GA プロパティ ID・対象リポジトリ等）は呼び出し側から渡す
 
 Issue の起票・Claude Code GitHub Actions の起動は **`pitolick/ecomi` リポジトリで行う**。
 
@@ -14,121 +14,56 @@ Issue の起票・Claude Code GitHub Actions の起動は **`pitolick/ecomi` リ
 
 ## このリポジトリの責務
 
-| クラス | 役割 |
-|--------|------|
-| `src/AnalyticsCollector.php` | GA4 Data API + Search Console API でデータ取得 |
-| `src/ReportGenerator.php` | Claude API でデータを分析・改善提案テキストを生成 |
-| `src/SlackNotifier.php` | Slack Incoming Webhook でレポートを送信 |
-| `src/Settings.php` | GCP サービスアカウント JSON・Slack URL を WP 管理画面で設定 |
-
-**実行タイミング**: WP-Cron で月1回（毎月1日）
-
----
-
-## ディレクトリ構成
-
-```
-ai-site-reporter/
-├── CLAUDE.md
-├── composer.json
-├── grumphp.yml
-├── phpcs.xml
-├── .php-cs-fixer.php
-├── phpunit.xml
-├── .coderabbit.yaml
-├── .env.example
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml
-│   │   └── auto-merge.yml
-│   ├── dependabot.yml
-│   └── pull_request_template.md
-├── src/
-│   ├── AnalyticsCollector.php
-│   ├── ReportGenerator.php
-│   ├── SlackNotifier.php
-│   └── Settings.php
-├── tests/
-│   └── Unit/
-├── vendor/
-└── ai-site-reporter.php
-```
+| モジュール | 役割 |
+|---|---|
+| `src/collectors/ga4.ts` | GA4 Data API でデータ取得 |
+| `src/collectors/search-console.ts` | Search Console API でクエリ・順位取得 |
+| `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得 |
+| `src/collectors/adsense.ts` | AdSense Management API で広告収益取得 |
+| `src/analyzer.ts` | Claude API で分析・改善提案を構造化 JSON で生成 |
+| `src/reporters/github-issues.ts` | 改善提案を GitHub Issue として個別起票（`@claude` メンション付き） |
+| `src/reporters/slack.ts` | Slack に月次サマリ通知 |
+| `src/pipeline.ts` | 上記を組み合わせた月次レポート実行 |
 
 ---
 
 ## 重要な設計制約
 
-### GCP サービスアカウントの管理
+### Issue 起票ロジック
 
-- JSON キーはサーバー上のファイルとして保存しない
-- WordPress 管理画面のテキストエリアに JSON の全文を貼り付けて保存する
-- `get_option()` で取得した JSON テキストを `json_decode()` してクライアント初期化に使う
-- 保存時は AES-256-CBC で暗号化する
+- `improvements: []` （改善点 0 件）→ Issue 起票なし（Slack サマリのみ）
+- `improvements: [...]` → 提案ごとに個別 Issue を起票
 
-```php
-// 例: GCP クライアント初期化
-$json = json_decode(decrypt_option('ai_site_reporter_gcp_json'), true);
-$client = new Google_Client();
-$client->setAuthConfig($json);
-```
+### Claude 認証の抽象化
 
-### Slack レポートのフォーマット
+API キー（従量課金）と Claude Code OAuth Token（既存サブスク）の両方をサポート（ai-article-poster と同じ `ClaudeAuth` インターフェース）。
 
-Slack へ送信するレポートには以下を含める:
+### サイト固有設定はコードに持たない
 
-```
-【月次サイトレポート】YYYY年MM月
-━━━━━━━━━━━━━━━
-📊 トラフィック概要
-  セッション数: X,XXX（前月比 +XX%）
-  ページビュー: X,XXX
-  直帰率: XX%
-
-🔍 検索パフォーマンス
-  クリック数: X,XXX
-  表示回数: XX,XXX
-  平均掲載順位: XX位
-
-💡 Claude による分析・改善提案
-  [Claude が生成したテキスト]
-
-⚠️ 要対応事項
-  [優先度の高い改善点]
-━━━━━━━━━━━━━━━
-```
-
-### 権限設定（GCP）
-
-- GA4: サービスアカウントを「閲覧者」として追加
-- Search Console: サービスアカウントを「制限付きユーザー」として追加
-- 権限は読み取り専用に限定すること
-
-### API キー管理
-
-設定値はすべて WordPress 管理画面（`設定 > AI Site Reporter`）から入力し、AES-256-CBC で暗号化して DB に保存する。
+GA プロパティ ID・対象リポジトリ・サイト URL・分析対象スコープ等はすべて `siteContext` オプションで呼び出し側から渡す。コードにハードコードしない。
 
 ---
 
 ## 技術スタック
 
 | 項目 | 採用技術 |
-|------|---------|
-| 言語 | PHP 8.1 |
-| 外部 API | GA4 Data API・Search Console API（Google Client Library for PHP） |
-| AI | Claude API（分析・提案テキスト生成） |
-| 通知 | Slack Incoming Webhook |
-| テスト | PHPUnit + WP_Mock（外部 API はモック） |
-| Lint | PHP_CodeSniffer（WordPress Coding Standards） |
-| フォーマット | PHP CS Fixer |
-| Git フック | GrumPHP |
+|---|---|
+| 言語 | TypeScript 5.6+ |
+| ランタイム | Node.js 20+ (ESM) |
+| 外部 API | GA4 Data API / Search Console API / PageSpeed Insights API / AdSense Management API（Google API Client ライブラリ） |
+| AI | Claude API（分析・提案生成） |
+| 通知 | Slack Incoming Webhook / GitHub REST API |
+| テスト | Vitest（外部 API はすべてモック） |
+| Lint | ESLint 9 (flat config) |
+| Formatter | Prettier 3 |
 
 ---
 
 ## 開発ルール
 
-- コミットメッセージ・PR・Issue はすべて日本語で記述する
-- GA4 API・Search Console API・Claude API の呼び出しはすべてモックしてテストを書く
-- ええこみ固有の設定値（サイト URL・プロパティ ID 等）をコードにハードコードしない
+- コミットメッセージ・PR・Issue はすべて日本語で記述
+- 外部 API 呼出しは必ずモックしてテスト可能にする
+- サイト固有設定をコードにハードコードしない
 
 ### コミットメッセージ形式
 
@@ -138,33 +73,21 @@ fix: 〇〇のバグを修正
 chore: ライブラリを更新
 test: テストを追加・修正
 refactor: 〇〇をリファクタリング
-style: フォーマット修正
+docs: ドキュメントを更新
 ```
-
----
-
-## GCP セットアップ手順（初回のみ・人間が実施）
-
-1. Google Cloud Console でプロジェクト作成
-2. GA4 Data API・Search Console API を有効化
-3. サービスアカウントを作成し JSON キーをダウンロード
-4. GA4 プロパティに「閲覧者」としてサービスアカウントを追加
-5. Search Console に「制限付きユーザー」としてサービスアカウントを追加
-6. WordPress 管理画面 → 設定 > AI Site Reporter に JSON テキストを貼り付けて保存
 
 ---
 
 ## 仕様書の場所
 
-| ドキュメント | 参照すべきセクション |
-|------------|------------------|
-| Cowork: `docs/01_企画・要件定義.md` | §4-7（サイト分析レポートプラグイン仕様）・§8（運用管理方針・レポートフォーマット） |
-| Cowork: `docs/02_プラグイン開発・運用手順書.md` | §5（API キー管理）・§6（テスト）・§7（lint） |
+設計の全体像は親リポジトリの以下を参照:
+
+- `pitolick/ecomi`: `docs/superpowers/specs/2026-05-13-ai-plugins-detach-from-wp-design.md`（§4-3 ai-site-reporter の責務、§7 分析・Issue 起票ロジック）
 
 ---
 
 ## 関連リポジトリ
 
 | リポジトリ | 関係 |
-|-----------|------|
-| `pitolick/ecomi` | 親リポジトリ（Issue 起票・WP-Cron スケジュール管理） |
+|---|---|
+| `pitolick/ecomi` | 親リポジトリ（Issue 起票先・実行スケジュール管理） |
