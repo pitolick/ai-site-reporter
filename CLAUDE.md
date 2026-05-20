@@ -1,14 +1,15 @@
-# CLAUDE.md — pitolick/ai-site-reporter
+# CLAUDE.md — ai-site-reporter
 
 ## プロジェクト概要
 
 サイト分析・改善提案の汎用 TypeScript ライブラリ。GA4・Search Console・PageSpeed・AdSense からデータを取得し、Claude API で分析して GitHub Issue 起票 + Slack 通知を行う。
 
-- **e-comi リポジトリ**（`pitolick/ecomi`）のサブモジュールとして `plugins/ai-site-reporter/` に配置される
+- 複数の WordPress 投稿プロジェクトから submodule として利用される想定
 - WordPress と連携しない（外部 API → Claude → Issue/Slack のパイプライン）
 - サイト固有設定（GA プロパティ ID・対象リポジトリ等）は呼び出し側から渡す
+- 単独で `npm test` / `npm run typecheck` が成立する自己完結リポジトリ
 
-Issue の起票・Claude Code GitHub Actions の起動は **`pitolick/ecomi` リポジトリで行う**。
+Issue の起票・Claude Code GitHub Actions の起動は通常、利用側の親リポジトリで行う（このライブラリは PR レビューのみ）。
 
 ---
 
@@ -36,7 +37,7 @@ Issue の起票・Claude Code GitHub Actions の起動は **`pitolick/ecomi` リ
 
 ### Claude 認証の抽象化
 
-API キー（従量課金）と Claude Code OAuth Token（既存サブスク）の両方をサポート（ai-article-poster と同じ `ClaudeAuth` インターフェース）。
+API キー（従量課金）と Claude Code OAuth Token（既存サブスク）の両方をサポート（`@pitolick/ai-article-poster` と同じ `ClaudeAuth` インターフェース）。
 
 ### サイト固有設定はコードに持たない
 
@@ -80,14 +81,4 @@ docs: ドキュメントを更新
 
 ## 仕様書の場所
 
-設計の全体像は親リポジトリの以下を参照:
-
-- `pitolick/ecomi`: `docs/superpowers/specs/2026-05-13-ai-plugins-detach-from-wp-design.md`（§4-3 ai-site-reporter の責務、§7 分析・Issue 起票ロジック）
-
----
-
-## 関連リポジトリ
-
-| リポジトリ | 関係 |
-|---|---|
-| `pitolick/ecomi` | 親リポジトリ（Issue 起票先・実行スケジュール管理） |
+設計の全体像は利用側プロジェクトの設計書を参照する。このリポジトリ単体での公開仕様は README.md と `src/types.ts` の TSDoc に集約する。
