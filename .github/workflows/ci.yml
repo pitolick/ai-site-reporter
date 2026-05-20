@@ -43,6 +43,6 @@ jobs:
            steps.metadata.outputs.dependency-type == 'direct:development') ||
           (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
            steps.metadata.outputs.package-ecosystem == 'github_actions')
-        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
+        run: gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
