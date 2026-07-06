@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.10.0",
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.1.0",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^9.1.0",
     "husky": "^9.1.7",
@@ -38,6 +38,6 @@
     "prettier": "^3.9.1",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.62.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   }
 }
