@@ -30,14 +30,14 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.10.0",
-    "@types/node": "^26.1.0",
-    "eslint": "^10.6.0",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
     "eslint-config-prettier": "^9.1.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
-    "prettier": "^3.9.1",
+    "prettier": "^3.9.5",
     "typescript": "^5.6.0",
-    "typescript-eslint": "^8.62.0",
+    "typescript-eslint": "^8.63.0",
     "vitest": "^4.1.10"
   }
 }
