@@ -58,16 +58,24 @@ export function createServiceAccountAuth(raw: string, options: AuthOptions = {})
 
   return {
     async getToken(scopes: string[]): Promise<string> {
-      const key = scopes.join(' ');
-      const cached = cache.get(key);
+      // キャッシュキーはスコープの順序に依存させない。OAuth の scope はスペース区切りの
+      // 集合として解釈され順序に意味は無いはずだが、呼び出し順が違うだけで別エントリに
+      // なると冗長なトークン取得が起きるため、ソートしてから join する。
+      const cacheKey = [...scopes].sort().join(' ');
+      const cached = cache.get(cacheKey);
       if (cached && now() < cached.expiresAtMs) return cached.token;
 
+      // JWT の scope クレームには呼び出し順をそのまま渡す（従来の挙動を維持）。
+      // OAuth 仕様上スコープは順序に意味の無い集合のはずだが、実際に Google の
+      // token endpoint へ送る値を変えるのは実 API の挙動を変える判断になるため、
+      // ここは保守的に「キャッシュキーだけソートし、送信内容は変えない」を選ぶ。
+      const requestedScope = scopes.join(' ');
       const issuedAt = Math.floor(now() / 1000);
       const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
       const claims = base64url(
         JSON.stringify({
           iss: credential.client_email,
-          scope: key,
+          scope: requestedScope,
           aud: TOKEN_ENDPOINT,
           iat: issuedAt,
           exp: issuedAt + 3600,
@@ -99,7 +107,7 @@ export function createServiceAccountAuth(raw: string, options: AuthOptions = {})
       }
 
       const lifetime = body.expires_in ?? 3600;
-      cache.set(key, {
+      cache.set(cacheKey, {
         token: body.access_token,
         expiresAtMs: now() + (lifetime - EXPIRY_SKEW_SECONDS) * 1000,
       });

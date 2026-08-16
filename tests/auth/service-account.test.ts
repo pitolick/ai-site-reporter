@@ -93,6 +93,18 @@ describe('createServiceAccountAuth', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('スコープの順序が違うだけなら同じキャッシュエントリを使う', async () => {
+    const fetchImpl = vi.fn(async () => tokenResponse('token-order'));
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await auth.getToken(['scope-a', 'scope-b']);
+    await auth.getToken(['scope-b', 'scope-a']);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('EXPIRY_SKEW_SECONDS 分前倒しで期限切れとみなし取り直す', async () => {
     // expires_in は 3600 秒（= 3_600_000ms）。EXPIRY_SKEW_SECONDS(60s) 前倒しなので
     // キャッシュは issuedAt + 3_540_000ms で切れる。1 時間丸ごと進めると skew を
