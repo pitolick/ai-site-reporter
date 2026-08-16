@@ -74,9 +74,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: タグ作成・push（publish 成功後・best-effort）
-        if: steps.check.outputs.skip != 'true'
-        continue-on-error: true
+      - name: タグ作成・push（タグが存在しないときは publish を skip した実行でも試みる）
         env:
           VERSION: ${{ steps.check.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
