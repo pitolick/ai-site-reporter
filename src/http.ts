@@ -40,6 +40,10 @@ export async function fetchJson<T>(
     throw new ApiError(api, res.status, message);
   }
 
+  if (body === null) {
+    throw new ApiError(api, res.status, '応答本文が null です');
+  }
+
   return { status: res.status, body: body as T };
 }
 

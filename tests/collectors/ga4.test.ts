@@ -255,6 +255,58 @@ describe('fetchEventCounts', () => {
       ),
     ).rejects.toMatchObject({ name: 'ApiError', api: 'ga4', status: 200 });
   });
+
+  it('メトリック値が数値でない文字列なら ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        rows: [
+          { dimensionValues: [{ value: 'alpha' }], metricValues: [{ value: 'not-a-number' }] },
+        ],
+        rowCount: 1,
+      }),
+    );
+
+    await expect(
+      fetchEventCounts(
+        auth,
+        '123',
+        { dateRange },
+        {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      api: 'ga4',
+      status: 200,
+      message: /メトリック値は非負整数/,
+    });
+  });
+
+  it('メトリック値が欠損なら ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        rows: [{ dimensionValues: [{ value: 'alpha' }], metricValues: [{ value: '' }] }],
+        rowCount: 1,
+      }),
+    );
+
+    await expect(
+      fetchEventCounts(
+        auth,
+        '123',
+        { dateRange },
+        {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      api: 'ga4',
+      status: 200,
+      message: /メトリック値が欠損/,
+    });
+  });
 });
 
 describe('fetchParameterBreakdown', () => {
@@ -400,5 +452,51 @@ describe('fetchParameterBreakdown', () => {
 
     expect(result.rowCount).toBe(1);
     expect(result.truncated).toBe(false);
+  });
+
+  it('メトリック値が数値でない文字列なら ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        rows: [{ dimensionValues: [{ value: 'store-a' }], metricValues: [{ value: 'invalid' }] }],
+        rowCount: 1,
+      }),
+    );
+
+    await expect(
+      fetchParameterBreakdown(
+        auth,
+        '123',
+        { dateRange, eventName: 'alpha', parameter: 'store' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch },
+      ),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      api: 'ga4',
+      status: 200,
+      message: /メトリック値は非負整数/,
+    });
+  });
+
+  it('メトリック値が欠損なら ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        rows: [{ dimensionValues: [{ value: 'store-a' }], metricValues: [] }],
+        rowCount: 1,
+      }),
+    );
+
+    await expect(
+      fetchParameterBreakdown(
+        auth,
+        '123',
+        { dateRange, eventName: 'alpha', parameter: 'store' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch },
+      ),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      api: 'ga4',
+      status: 200,
+      message: /メトリック値が欠損/,
+    });
   });
 });

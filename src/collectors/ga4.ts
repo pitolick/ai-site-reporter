@@ -7,6 +7,27 @@ export const GA4_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
 /** GA4 が値の無いディメンションに返す文字列。行が落ちるのではなくこの値の行が返る。 */
 export const NOT_SET = '(not set)';
 
+/**
+ * GA4 のメトリック値（文字列で返される）を有限の非負整数としてパースする。
+ * 数値以外の文字列や負数、NaN が渡された場合は ApiError を throw する。
+ */
+function parseMetricCount(metricValue: string | undefined, source: string): number {
+  if (metricValue === undefined || metricValue === '') {
+    throw new ApiError('ga4', 200, `${source}: メトリック値が欠損しています`);
+  }
+
+  const num = Number(metricValue);
+  if (!Number.isFinite(num) || num < 0 || !Number.isInteger(num)) {
+    throw new ApiError(
+      'ga4',
+      200,
+      `${source}: メトリック値は非負整数である必要があります（値: ${metricValue}）`,
+    );
+  }
+
+  return num;
+}
+
 export interface Ga4Row {
   dimensions: string[];
   metrics: string[];
@@ -103,7 +124,12 @@ export async function fetchEventCounts(
       `イベント件数の応答が limit で切り詰められています（rowCount=${report.rowCount}, rows=${report.rows.length}）。切り詰められたイベント件数クエリに正しい答えはないため、返らなかったイベントを 0 件として補完せず throw します。limit を上げるか eventNames を絞ってください。`,
     );
   }
-  const found = new Map(report.rows.map((row) => [row.dimensions[0], Number(row.metrics[0] ?? 0)]));
+  const found = new Map(
+    report.rows.map((row) => [
+      row.dimensions[0],
+      parseMetricCount(row.metrics[0], `fetchEventCounts: eventName=${row.dimensions[0]}`),
+    ]),
+  );
 
   if (!params.eventNames?.length) {
     return [...found].map(([eventName, count]) => ({ eventName, count }));
@@ -160,7 +186,10 @@ export async function fetchParameterBreakdown(
 
   const rows = report.rows.map((row) => ({
     value: row.dimensions[0] ?? NOT_SET,
-    count: Number(row.metrics[0] ?? 0),
+    count: parseMetricCount(
+      row.metrics[0],
+      `fetchParameterBreakdown: parameter=${params.parameter}, value=${row.dimensions[0] ?? NOT_SET}`,
+    ),
   }));
   const total = rows.reduce((sum, row) => sum + row.count, 0);
   const notSetCount = rows

@@ -61,4 +61,18 @@ describe('fetchJson', () => {
       fetchJson('test-api', fetchImpl as unknown as typeof fetch, 'https://example.com/'),
     ).rejects.toThrow(/x{500}…/);
   });
+
+  it('2xx でも応答本文が null なら ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+
+    await expect(
+      fetchJson('test-api', fetchImpl as unknown as typeof fetch, 'https://example.com/'),
+    ).rejects.toMatchObject({ name: 'ApiError', api: 'test-api', status: 200, message: /null/ });
+  });
 });

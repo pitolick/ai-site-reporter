@@ -150,4 +150,44 @@ describe('createServiceAccountAuth', () => {
       /client_email.*private_key/,
     );
   });
+
+  it('client_email が文字列でなければ即座に失敗する', () => {
+    expect(() =>
+      createServiceAccountAuth(
+        JSON.stringify({
+          client_email: { value: 'test' },
+          private_key: privateKey,
+        }),
+      ),
+    ).toThrow(/client_email は空でない文字列/);
+  });
+
+  it('private_key が文字列でなければ即座に失敗する', () => {
+    expect(() =>
+      createServiceAccountAuth(
+        JSON.stringify({
+          client_email: 'test@example.com',
+          private_key: 12345,
+        }),
+      ),
+    ).toThrow(/private_key は空でない文字列/);
+  });
+
+  it('200 でも access_token が文字列でなければ ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ access_token: { token: 'not-a-string' }, expires_in: 3600 }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+    );
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await expect(auth.getToken(['scope-a'])).rejects.toThrow(/oauth2 200.*access_token/);
+  });
 });

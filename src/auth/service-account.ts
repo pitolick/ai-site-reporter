@@ -34,6 +34,15 @@ export function parseServiceAccountCredential(raw: string): ServiceAccountCreden
   if (!parsed.client_email || !parsed.private_key) {
     throw new Error('サービスアカウントの資格情報に client_email / private_key がありません');
   }
+
+  if (typeof parsed.client_email !== 'string' || parsed.client_email.trim() === '') {
+    throw new Error('サービスアカウントの client_email は空でない文字列である必要があります');
+  }
+
+  if (typeof parsed.private_key !== 'string' || parsed.private_key.trim() === '') {
+    throw new Error('サービスアカウントの private_key は空でない文字列である必要があります');
+  }
+
   return { client_email: parsed.client_email, private_key: parsed.private_key };
 }
 
@@ -82,8 +91,12 @@ export function createServiceAccountAuth(raw: string, options: AuthOptions = {})
           }).toString(),
         },
       );
-      if (!body.access_token) {
-        throw new ApiError('oauth2', status, JSON.stringify(body));
+      if (!body.access_token || typeof body.access_token !== 'string') {
+        throw new ApiError(
+          'oauth2',
+          status,
+          `access_token は空でない文字列である必要があります: ${JSON.stringify(body.access_token)}`,
+        );
       }
 
       const lifetime = body.expires_in ?? 3600;
