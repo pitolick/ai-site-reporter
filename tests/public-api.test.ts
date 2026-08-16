@@ -22,9 +22,24 @@ function findNumericIds(content: string): string[] {
   return content.match(/\b\d{9,10}\b/g) ?? [];
 }
 
-/** 利用側のドメインパターン（`<サブドメイン>.<運営ドメイン>` 形式）を抽出する。 */
-function findDomainPatterns(content: string): string[] {
-  return content.match(/[a-z0-9-]+\.pitolick\.com/gi) ?? [];
+/**
+ * 利用側のドメインパターン（`<サブドメイン>.<運営ドメイン>` 形式）を抽出する。
+ * domains リストから「ドットを含むエントリ」のみを対象にする
+ * （ドット無し = 語ベース検査。ドット有り = ドメイン検査）。
+ * 正規表現にする前にメタ文字をエスケープする。
+ */
+function findDomainPatterns(content: string, domains: string[]): string[] {
+  const domainEntries = domains.filter((d) => d.includes('.'));
+  if (domainEntries.length === 0) return [];
+
+  // 各ドメインについて `<サブドメイン>.<ドメイン>` の形にマッチさせる
+  const patterns = domainEntries.map((domain) => {
+    // メタ文字をエスケープ（. → \. など）
+    const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return `[a-z0-9-]+\\.${escaped}`;
+  });
+  const regex = new RegExp(patterns.join('|'), 'gi');
+  return content.match(regex) ?? [];
 }
 
 /** 禁止語（大小無視）を検出する。 */
@@ -101,11 +116,21 @@ describe('実サイトの数値 ID（9〜10 桁）が混入していない', () 
 });
 
 describe('利用側のドメイン識別子（運営ドメインのサブドメイン）が混入していない', () => {
-  it.each(targets)('%s', (path) => {
-    const content = readTextOrNull(path);
-    if (content === null) return;
-    expect(findDomainPatterns(content)).toEqual([]);
-  });
+  const domains = FORBIDDEN.filter((d) => d.includes('.'));
+  if (FORBIDDEN.length === 0 || domains.length === 0) {
+    it.skip(
+      FORBIDDEN.length === 0
+        ? 'LEAK_GUARD_WORDS が未設定のためドメイン検査を skip'
+        : 'LEAK_GUARD_WORDS にドメイン（ドット含むエントリ）が無いため検査を skip',
+      () => {},
+    );
+  } else {
+    it.each(targets)('%s', (path) => {
+      const content = readTextOrNull(path);
+      if (content === null) return;
+      expect(findDomainPatterns(content, domains)).toEqual([]);
+    });
+  }
 });
 
 describe('検出ロジックそのものの positive / negative テスト', () => {
@@ -118,14 +143,37 @@ describe('検出ロジックそのものの positive / negative テスト', () =
     expect(unexpected).toEqual([]);
   });
 
-  it('サブドメイン付きの運営ドメインを検出する', () => {
-    expect(findDomainPatterns('see https://example.pitolick.com/path')).toEqual([
-      'example.pitolick.com',
+  it('サブドメイン付きのドメイン（ドット含むエントリ）を検出する', () => {
+    expect(findDomainPatterns('see https://example.example.com/path', ['example.com'])).toEqual([
+      'example.example.com',
     ]);
   });
 
-  it('サブドメイン無しの運営ドメイン単体は検出しない', () => {
-    expect(findDomainPatterns('pitolick.com はサブドメインが無い')).toEqual([]);
+  it('サブドメイン無しのドメイン単体は検出しない', () => {
+    expect(findDomainPatterns('example.com はサブドメインが無い', ['example.com'])).toEqual([]);
+  });
+
+  it('複数ドメインを同時にチェックできる', () => {
+    const content = 'check https://api.example.com and https://cdn.sample.org here';
+    expect(findDomainPatterns(content, ['example.com', 'sample.org'])).toEqual([
+      'api.example.com',
+      'cdn.sample.org',
+    ]);
+  });
+
+  it('ドット無しのエントリはドメイン検査から除外される', () => {
+    // ドット無し = 語ベース検査として扱うため、ドメイン検査では無視される
+    expect(findDomainPatterns('somebrand.example.com', ['somebrand'])).toEqual([]);
+  });
+
+  it('メタ文字がエスケープされ、ドット以外の任意文字にマッチしない', () => {
+    // 'exampleXcom' は 'example.com' にマッチしてはいけない
+    // （. がメタ文字として使われていないことを確認）
+    expect(findDomainPatterns('exampleXcom should not match', ['example.com'])).toEqual([]);
+  });
+
+  it('ドメインリストが空なら何も検出しない', () => {
+    expect(findDomainPatterns('example.example.com exists', [])).toEqual([]);
   });
 
   it('語リストを渡すとその語を検出する', () => {
