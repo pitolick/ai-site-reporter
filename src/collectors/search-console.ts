@@ -33,12 +33,16 @@ export interface SearchAnalyticsResult {
    * `rows.length` が要求した `rowLimit`（未指定なら既定の `DEFAULT_ROW_LIMIT`）
    * と一致したら true。Search Console API はレスポンスに総行数を返さないため、
    * 「一致した」だけでは確定ではなく疑いに過ぎない（ちょうど一致しただけの
-   * 可能性もある）。ただし false なら少なくとも切り詰められてはいない。
+   * 可能性もある）。
+   *
+   * **`false` は全件取得を保証しない。** `rows.length` が `rowLimit` に達しなかった
+   * ことのみを示す。Google の Search Analytics API は内部制限により上位結果を優先
+   * して返す仕様であり、API が明示的に「すべてのデータ行を返す」ことを保証していない。
+   * たとえ `truncated: false` でも、別の理由で対象データが欠落している可能性がある。
    *
    * throw はしない。「上位 N 件だけ欲しい」という正当な使い方があるため、
-   * 判断は呼び出し側に委ねる。true のときにその結果を全件として扱いたいなら、
-   * `rowLimit` を上げるか `startRow` でページングし、返ってきた行数が
-   * 要求行数を下回るまで続けること。
+   * 判断は呼び出し側に委ねる。全件の確認が必要なら、`rowLimit` を上げるか
+   * `startRow` でページングし、返ってきた行数が要求行数を下回るまで続けること。
    */
   truncated: boolean;
 }

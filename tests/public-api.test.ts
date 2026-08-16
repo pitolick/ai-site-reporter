@@ -36,7 +36,8 @@ function findDomainPatterns(content: string, domains: string[]): string[] {
   const patterns = domainEntries.map((domain) => {
     // メタ文字をエスケープ（. → \. など）
     const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return `[a-z0-9-]+\\.${escaped}`;
+    // サブドメイン（1 個以上のラベル）+ ドメイン。ドメイン直後に別ラベルが続かない先読み
+    return `[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.${escaped}(?![a-z0-9-]|\\.[a-z0-9-])`;
   });
   const regex = new RegExp(patterns.join('|'), 'gi');
   return content.match(regex) ?? [];
@@ -173,6 +174,19 @@ describe('検出ロジックそのものの positive / negative テスト', () =
 
   it('サブドメイン無しのドメイン単体は検出しない', () => {
     expect(findDomainPatterns('example.com はサブドメインが無い', ['example.com'])).toEqual([]);
+  });
+
+  it('ホスト名ラベルが続く誤検出を防ぐ（sub.example.com.invalid は sub.example.com を検出しない）', () => {
+    // 先読みアサーションが無いと sub.example.com.invalid から sub.example.com を拾ってしまう
+    expect(findDomainPatterns('sub.example.com.invalid', ['example.com'])).toEqual([]);
+  });
+
+  it('深いサブドメイン（a.b.example.com）も検出する', () => {
+    // a.b.example.com は `a.b` というサブドメイン層の右隣が example.com であり、
+    // その後に別のラベルが続かない。先読みをすり抜ける正規な形
+    expect(findDomainPatterns('a.b.example.com is deep', ['example.com'])).toEqual([
+      'a.b.example.com',
+    ]);
   });
 
   it('複数ドメインを同時にチェックできる', () => {
