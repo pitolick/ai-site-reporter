@@ -1,5 +1,5 @@
 import { fetchJson } from '../http.js';
-import type { HttpOptions, TokenProvider } from '../types.js';
+import type { DateRange, HttpOptions, TokenProvider } from '../types.js';
 
 export const SEARCH_CONSOLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
 
@@ -19,9 +19,7 @@ export interface SearchAnalyticsRow {
   position: number;
 }
 
-export interface SearchAnalyticsRequest {
-  startDate: string;
-  endDate: string;
+export interface SearchAnalyticsRequest extends DateRange {
   dimensions: string[];
   rowLimit?: number;
   [key: string]: unknown;

@@ -1,6 +1,6 @@
 import { createSign } from 'node:crypto';
 import { fetchJson } from '../http.js';
-import { ApiError, type TokenProvider } from '../types.js';
+import { ApiError, type HttpOptions, type TokenProvider } from '../types.js';
 
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 /** 期限ちょうどでの失効を避けるための前倒し秒数。 */
@@ -11,8 +11,7 @@ export interface ServiceAccountCredential {
   private_key: string;
 }
 
-export interface AuthOptions {
-  fetchImpl?: typeof fetch;
+export interface AuthOptions extends HttpOptions {
   now?: () => number;
 }
 
