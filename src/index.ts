@@ -10,7 +10,15 @@ export {
   fetchParameterBreakdown,
 } from './collectors/ga4.js';
 export type { Ga4Report, Ga4Row, EventCount, ParameterBreakdown } from './collectors/ga4.js';
-export { SEARCH_CONSOLE_SCOPE, querySearchAnalytics } from './collectors/search-console.js';
-export type { SearchAnalyticsRow, SearchAnalyticsRequest } from './collectors/search-console.js';
+export {
+  SEARCH_CONSOLE_SCOPE,
+  DEFAULT_ROW_LIMIT,
+  querySearchAnalytics,
+} from './collectors/search-console.js';
+export type {
+  SearchAnalyticsRow,
+  SearchAnalyticsRequest,
+  SearchAnalyticsResult,
+} from './collectors/search-console.js';
 export { fetchPageSpeed } from './collectors/pagespeed.js';
 export type { CoreWebVitals } from './collectors/pagespeed.js';

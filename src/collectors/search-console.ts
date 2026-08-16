@@ -3,6 +3,14 @@ import type { HttpOptions, TokenProvider } from '../types.js';
 
 export const SEARCH_CONSOLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
 
+/**
+ * Search Console API が `rowLimit` を省略したときに適用する既定値。
+ * 公式ドキュメント上、`rowLimit` の既定は 1,000（最大 25,000）。
+ * レスポンスは総行数を返さないため、`rowLimit` 未指定時はこの値との
+ * 一致を切り詰めの疑いの判定基準にする。
+ */
+export const DEFAULT_ROW_LIMIT = 1000;
+
 export interface SearchAnalyticsRow {
   keys: string[];
   clicks: number;
@@ -19,16 +27,35 @@ export interface SearchAnalyticsRequest {
   [key: string]: unknown;
 }
 
+export interface SearchAnalyticsResult {
+  rows: SearchAnalyticsRow[];
+  /**
+   * `rows.length` が要求した `rowLimit`（未指定なら既定の `DEFAULT_ROW_LIMIT`）
+   * と一致したら true。Search Console API はレスポンスに総行数を返さないため、
+   * 「一致した」だけでは確定ではなく疑いに過ぎない（ちょうど一致しただけの
+   * 可能性もある）。ただし false なら少なくとも切り詰められてはいない。
+   *
+   * throw はしない。「上位 N 件だけ欲しい」という正当な使い方があるため、
+   * 判断は呼び出し側に委ねる。true のときにその結果を全件として扱いたいなら、
+   * `rowLimit` を上げるか `startRow` でページングし、返ってきた行数が
+   * 要求行数を下回るまで続けること。
+   */
+  truncated: boolean;
+}
+
 /**
  * Search Console の searchAnalytics.query を呼ぶ薄いラッパ。
  * データが無い期間は rows キーごと返らないため、空配列に正規化する。
+ *
+ * 全件取得の保証はしない。`rowLimit`（既定 1,000・最大 25,000）で切り詰め
+ * られることがある（詳細は `SearchAnalyticsResult.truncated` 参照）。
  */
 export async function querySearchAnalytics(
   auth: TokenProvider,
   siteUrl: string,
   request: SearchAnalyticsRequest,
   options: HttpOptions = {},
-): Promise<SearchAnalyticsRow[]> {
+): Promise<SearchAnalyticsResult> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const token = await auth.getToken([SEARCH_CONSOLE_SCOPE]);
 
@@ -43,5 +70,7 @@ export async function querySearchAnalytics(
     },
   );
 
-  return body.rows ?? [];
+  const rows = body.rows ?? [];
+  const effectiveLimit = request.rowLimit ?? DEFAULT_ROW_LIMIT;
+  return { rows, truncated: rows.length === effectiveLimit };
 }
