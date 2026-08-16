@@ -1,4 +1,4 @@
-import { fetchJson } from '../http.js';
+import { fetchJson, resolveFetch } from '../http.js';
 import { ApiError } from '../types.js';
 import type { DateRange, HttpOptions, TokenProvider } from '../types.js';
 
@@ -57,7 +57,7 @@ export async function runReport(
   request: Record<string, unknown>,
   options: HttpOptions = {},
 ): Promise<Ga4Report> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = resolveFetch(options.fetchImpl);
   const token = await auth.getToken([GA4_SCOPE]);
 
   const { body } = await fetchJson<RawGa4Response>(

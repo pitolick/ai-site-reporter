@@ -1,5 +1,5 @@
 import { createSign } from 'node:crypto';
-import { fetchJson } from '../http.js';
+import { fetchJson, resolveFetch } from '../http.js';
 import { ApiError, type HttpOptions, type TokenProvider } from '../types.js';
 
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -51,7 +51,7 @@ function base64url(input: string | Buffer): string {
 
 export function createServiceAccountAuth(raw: string, options: AuthOptions = {}): TokenProvider {
   const credential = parseServiceAccountCredential(raw);
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = resolveFetch(options.fetchImpl);
   const now = options.now ?? Date.now;
 
   const cache = new Map<string, { token: string; expiresAtMs: number }>();
