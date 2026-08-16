@@ -3,6 +3,18 @@ import { ApiError } from './types.js';
 /** ApiError のメッセージに含める本文の最大長。長すぎるレスポンスを丸めるため。 */
 const BODY_PREVIEW_LENGTH = 500;
 
+/**
+ * `options.fetchImpl` が無いときに使う既定の fetch 実装を解決する。
+ *
+ * `globalThis.fetch` を値として取り出して渡すと、呼び出し時に `this` が
+ * detach された状態で呼ばれる。Node は気にしないが、`this` を要求する実装
+ * （ブラウザや一部の edge ランタイムの fetch）では `TypeError: Illegal
+ * invocation` になるため、常に `globalThis` に束縛したクロージャを返す。
+ */
+export function resolveFetch(fetchImpl?: typeof fetch): typeof fetch {
+  return fetchImpl ?? ((...args) => globalThis.fetch(...args));
+}
+
 export interface FetchJsonResult<T> {
   /** レスポンスの HTTP ステータス（呼び出し側が追加のドメイン検証をするとき用）。 */
   status: number;

@@ -1,4 +1,4 @@
-import { fetchJson } from '../http.js';
+import { fetchJson, resolveFetch } from '../http.js';
 import type { HttpOptions } from '../types.js';
 
 export interface CoreWebVitals {
@@ -30,7 +30,7 @@ export async function fetchPageSpeed(
   params: { strategy: 'mobile' | 'desktop'; apiKey?: string },
   options: HttpOptions = {},
 ): Promise<CoreWebVitals> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = resolveFetch(options.fetchImpl);
 
   const query = new URLSearchParams({ url, strategy: params.strategy });
   if (params.apiKey) query.set('key', params.apiKey);

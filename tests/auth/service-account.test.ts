@@ -93,6 +93,53 @@ describe('createServiceAccountAuth', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('スコープの順序が違うだけなら同じキャッシュエントリを使う', async () => {
+    const fetchImpl = vi.fn(async () => tokenResponse('token-order'));
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await auth.getToken(['scope-a', 'scope-b']);
+    await auth.getToken(['scope-b', 'scope-a']);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('同一スコープの並行取得は single-flight で 1 回の fetch にまとまる', async () => {
+    // README が推奨する Promise.allSettled 的な並列取得を模す。JWT 署名〜
+    // fetchImpl 呼び出しまでは同期的に進むため、2 回目の呼び出しは 1 回目が
+    // 作った進行中の Promise を inFlight キャッシュから拾って共有できる。
+    const fetchImpl = vi.fn(async () => tokenResponse('token-parallel'));
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const [first, second] = await Promise.all([
+      auth.getToken(['scope-a']),
+      auth.getToken(['scope-a']),
+    ]);
+
+    expect(first).toBe('token-parallel');
+    expect(second).toBe('token-parallel');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('トークン取得に失敗しても次回の呼び出しで再試行できる', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(
+        async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }),
+      )
+      .mockImplementationOnce(async () => tokenResponse('token-retry'));
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await expect(auth.getToken(['scope-a'])).rejects.toThrow(/oauth2 400/);
+    await expect(auth.getToken(['scope-a'])).resolves.toBe('token-retry');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('EXPIRY_SKEW_SECONDS 分前倒しで期限切れとみなし取り直す', async () => {
     // expires_in は 3600 秒（= 3_600_000ms）。EXPIRY_SKEW_SECONDS(60s) 前倒しなので
     // キャッシュは issuedAt + 3_540_000ms で切れる。1 時間丸ごと進めると skew を

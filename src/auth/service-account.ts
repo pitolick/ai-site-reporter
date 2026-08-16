@@ -1,6 +1,6 @@
 import { createSign } from 'node:crypto';
-import { fetchJson } from '../http.js';
-import { ApiError, type TokenProvider } from '../types.js';
+import { fetchJson, resolveFetch } from '../http.js';
+import { ApiError, type HttpOptions, type TokenProvider } from '../types.js';
 
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 /** 期限ちょうどでの失効を避けるための前倒し秒数。 */
@@ -11,8 +11,7 @@ export interface ServiceAccountCredential {
   private_key: string;
 }
 
-export interface AuthOptions {
-  fetchImpl?: typeof fetch;
+export interface AuthOptions extends HttpOptions {
   now?: () => number;
 }
 
@@ -52,59 +51,87 @@ function base64url(input: string | Buffer): string {
 
 export function createServiceAccountAuth(raw: string, options: AuthOptions = {}): TokenProvider {
   const credential = parseServiceAccountCredential(raw);
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = resolveFetch(options.fetchImpl);
   const now = options.now ?? Date.now;
 
   const cache = new Map<string, { token: string; expiresAtMs: number }>();
+  /**
+   * 進行中のトークン取得を共有するための single-flight マップ。
+   * README が推奨する `Promise.allSettled` での並列取得では、同じスコープを
+   * 複数箇所から同時に要求すると JWT 署名とトークン交換が重複してしまう。
+   * 完了（成功・失敗どちらも）したら必ずエントリを消し、失敗時は次回の
+   * 呼び出しで再試行できるようにする（失敗した Promise をキャッシュに残さない）。
+   */
+  const inFlight = new Map<string, Promise<string>>();
 
   return {
     async getToken(scopes: string[]): Promise<string> {
-      const key = scopes.join(' ');
-      const cached = cache.get(key);
+      // キャッシュキーはスコープの順序に依存させない。OAuth の scope はスペース区切りの
+      // 集合として解釈され順序に意味は無いはずだが、呼び出し順が違うだけで別エントリに
+      // なると冗長なトークン取得が起きるため、ソートしてから join する。
+      const cacheKey = [...scopes].sort().join(' ');
+      const cached = cache.get(cacheKey);
       if (cached && now() < cached.expiresAtMs) return cached.token;
 
-      const issuedAt = Math.floor(now() / 1000);
-      const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-      const claims = base64url(
-        JSON.stringify({
-          iss: credential.client_email,
-          scope: key,
-          aud: TOKEN_ENDPOINT,
-          iat: issuedAt,
-          exp: issuedAt + 3600,
-        }),
-      );
-      const signer = createSign('RSA-SHA256');
-      signer.update(`${header}.${claims}`);
-      const assertion = `${header}.${claims}.${base64url(signer.sign(credential.private_key))}`;
+      const existing = inFlight.get(cacheKey);
+      if (existing) return existing;
 
-      const { status, body } = await fetchJson<{ access_token?: string; expires_in?: number }>(
-        'oauth2',
-        fetchImpl,
-        TOKEN_ENDPOINT,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-            assertion,
-          }).toString(),
-        },
-      );
-      if (!body.access_token || typeof body.access_token !== 'string') {
-        throw new ApiError(
-          'oauth2',
-          status,
-          `access_token は空でない文字列である必要があります: ${JSON.stringify(body.access_token)}`,
+      const fetchPromise = (async () => {
+        // JWT の scope クレームには呼び出し順をそのまま渡す（従来の挙動を維持）。
+        // OAuth 仕様上スコープは順序に意味の無い集合のはずだが、実際に Google の
+        // token endpoint へ送る値を変えるのは実 API の挙動を変える判断になるため、
+        // ここは保守的に「キャッシュキーだけソートし、送信内容は変えない」を選ぶ。
+        const requestedScope = scopes.join(' ');
+        const issuedAt = Math.floor(now() / 1000);
+        const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+        const claims = base64url(
+          JSON.stringify({
+            iss: credential.client_email,
+            scope: requestedScope,
+            aud: TOKEN_ENDPOINT,
+            iat: issuedAt,
+            exp: issuedAt + 3600,
+          }),
         );
-      }
+        const signer = createSign('RSA-SHA256');
+        signer.update(`${header}.${claims}`);
+        const assertion = `${header}.${claims}.${base64url(signer.sign(credential.private_key))}`;
 
-      const lifetime = body.expires_in ?? 3600;
-      cache.set(key, {
-        token: body.access_token,
-        expiresAtMs: now() + (lifetime - EXPIRY_SKEW_SECONDS) * 1000,
-      });
-      return body.access_token;
+        const { status, body } = await fetchJson<{ access_token?: string; expires_in?: number }>(
+          'oauth2',
+          fetchImpl,
+          TOKEN_ENDPOINT,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+              assertion,
+            }).toString(),
+          },
+        );
+        if (!body.access_token || typeof body.access_token !== 'string') {
+          throw new ApiError(
+            'oauth2',
+            status,
+            `access_token は空でない文字列である必要があります: ${JSON.stringify(body.access_token)}`,
+          );
+        }
+
+        const lifetime = body.expires_in ?? 3600;
+        cache.set(cacheKey, {
+          token: body.access_token,
+          expiresAtMs: now() + (lifetime - EXPIRY_SKEW_SECONDS) * 1000,
+        });
+        return body.access_token;
+      })();
+
+      inFlight.set(cacheKey, fetchPromise);
+      try {
+        return await fetchPromise;
+      } finally {
+        inFlight.delete(cacheKey);
+      }
     },
   };
 }

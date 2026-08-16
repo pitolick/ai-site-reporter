@@ -1,5 +1,5 @@
-import { fetchJson } from '../http.js';
-import type { HttpOptions, TokenProvider } from '../types.js';
+import { fetchJson, resolveFetch } from '../http.js';
+import type { DateRange, HttpOptions, TokenProvider } from '../types.js';
 
 export const SEARCH_CONSOLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
 
@@ -19,9 +19,7 @@ export interface SearchAnalyticsRow {
   position: number;
 }
 
-export interface SearchAnalyticsRequest {
-  startDate: string;
-  endDate: string;
+export interface SearchAnalyticsRequest extends DateRange {
   dimensions: string[];
   rowLimit?: number;
   [key: string]: unknown;
@@ -60,7 +58,7 @@ export async function querySearchAnalytics(
   request: SearchAnalyticsRequest,
   options: HttpOptions = {},
 ): Promise<SearchAnalyticsResult> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = resolveFetch(options.fetchImpl);
   const token = await auth.getToken([SEARCH_CONSOLE_SCOPE]);
 
   const { body } = await fetchJson<{ rows?: SearchAnalyticsRow[] }>(
