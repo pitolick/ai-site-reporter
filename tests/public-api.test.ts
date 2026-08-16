@@ -48,6 +48,16 @@ function findForbiddenWords(content: string, words: string[]): string[] {
   return words.filter((word) => lower.includes(word.toLowerCase()));
 }
 
+/** エントリリストからドット無しの語を選択する。 */
+function selectWordEntries(entries: string[]): string[] {
+  return entries.filter((w) => !w.includes('.'));
+}
+
+/** エントリリストからドット有りのドメインを選択する。 */
+function selectDomainEntries(entries: string[]): string[] {
+  return entries.filter((d) => d.includes('.'));
+}
+
 /**
  * テストで使う架空のプレースホルダ。9 桁だが単純な昇順の作り物の数字列で
  * 実サイトの識別子ではないため許可する（tests/collectors/ga4.test.ts）。
@@ -89,6 +99,11 @@ describe('公開 API', () => {
     expect(typeof api.fetchPageSpeed).toBe('function');
   });
 
+  it('定数 DEFAULT_ROW_LIMIT を export している', () => {
+    expect(typeof api.DEFAULT_ROW_LIMIT).toBe('number');
+    expect(api.DEFAULT_ROW_LIMIT).toBeGreaterThan(0);
+  });
+
   it('走査対象となる git 追跡ファイルが 1 件以上存在する', () => {
     expect(targets.length).toBeGreaterThan(0);
   });
@@ -96,7 +111,7 @@ describe('公開 API', () => {
 
 describe('サイト固有の語が混入していない（LEAK_GUARD_WORDS 必須）', () => {
   // ドット無しのエントリ（語ベース検査対象）のみを絞り込む
-  const words = FORBIDDEN.filter((w) => !w.includes('.'));
+  const words = selectWordEntries(FORBIDDEN);
   if (words.length === 0) {
     it.skip(
       FORBIDDEN.length === 0
@@ -123,7 +138,7 @@ describe('実サイトの数値 ID（9〜10 桁）が混入していない', () 
 });
 
 describe('利用側のドメイン識別子（運営ドメインのサブドメイン）が混入していない', () => {
-  const domains = FORBIDDEN.filter((d) => d.includes('.'));
+  const domains = selectDomainEntries(FORBIDDEN);
   if (FORBIDDEN.length === 0 || domains.length === 0) {
     it.skip(
       FORBIDDEN.length === 0
@@ -193,9 +208,22 @@ describe('検出ロジックそのものの positive / negative テスト', () =
     expect(findForbiddenWords('foobarbaz', [])).toEqual([]);
   });
 
-  it('ドット付きエントリ（ドメイン）だけの場合、語検査は何も検出しない', () => {
-    // 絞り込み後の words リストが空になることで語検査が skip されることを確認
-    const words = ['example.com', 'sample.org'].filter((w) => !w.includes('.'));
+  it('selectWordEntries がドット無しのエントリだけを選択する', () => {
+    expect(selectWordEntries(['alpha', 'example.com', 'beta', 'sample.org'])).toEqual([
+      'alpha',
+      'beta',
+    ]);
+  });
+
+  it('selectDomainEntries がドット有りのエントリだけを選択する', () => {
+    expect(selectDomainEntries(['alpha', 'example.com', 'beta', 'sample.org'])).toEqual([
+      'example.com',
+      'sample.org',
+    ]);
+  });
+
+  it('ドット付きエントリ（ドメイン）だけの場合、selectWordEntries は空配列を返す', () => {
+    const words = selectWordEntries(['example.com', 'sample.org']);
     expect(words.length).toBe(0);
     expect(findForbiddenWords('example.com and sample.org in text', words)).toEqual([]);
   });

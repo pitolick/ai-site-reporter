@@ -50,7 +50,7 @@ console.log(breakdown.notSetRate);
 
 ## API
 
-| 関数 | 役割 |
+| 関数 / 定数 | 役割 |
 | --- | --- |
 | `createServiceAccountAuth(raw, options?)` | サービスアカウント JSON / base64 からトークンプロバイダを作る（スコープ別にキャッシュ） |
 | `runReport(auth, propertyId, request, options?)` | GA4 Data API の `runReport` の薄いラッパ |
@@ -58,6 +58,7 @@ console.log(breakdown.notSetRate);
 | `fetchParameterBreakdown(auth, propertyId, params, options?)` | 指定イベントを指定パラメータで分解し `(not set)` の件数と率を返す。応答が `limit`（既定 200）件を超えると `rowCount` は総マッチ行数を保持したまま `truncated: true` になるので、`notSetRate` 等の分母が不完全でないか呼び出し側で確認すること |
 | `querySearchAnalytics(auth, siteUrl, request, options?)` | Search Console の `searchAnalytics.query` の薄いラッパ。`{ rows, truncated }` を返す。`rows.length` が `rowLimit`（未指定なら既定 1,000）と一致すると `truncated: true` になる。API は総行数を返さないため確定ではなく疑いに過ぎないが、`truncated: true` の結果を全件として扱わないこと（`rowLimit` を上げるか `startRow` でページングする） |
 | `fetchPageSpeed(url, params, options?)` | PageSpeed Insights（API キーは任意） |
+| `DEFAULT_ROW_LIMIT` | Search Console API の既定行数制限（`querySearchAnalytics` で `rowLimit` 未指定時の値） |
 
 ## ライセンス
 

@@ -32,6 +32,12 @@ jobs:
             echo "エラー: LEAK_GUARD_WORDS secret が未設定です。push イベントは fork ではなく secret が使えるはずなので、未設定は設定漏れです。" >&2
             exit 1
           fi
+          # ドメイン検査（ドット付きエントリ）が無効のままでないか確認
+          HAS_DOMAIN_ENTRY="$(echo "$LEAK_GUARD_WORDS" | grep -o '\.' || true)"
+          if [ -z "$HAS_DOMAIN_ENTRY" ]; then
+            echo "エラー: LEAK_GUARD_WORDS にドット付きエントリ（ドメイン検査対象）が無いため、ドメイン検査が無効のまま CI が走ります。ドメイン検査を有効にするには、環境変数に <サブドメイン>.<運営ドメイン> の形式を含めてください。" >&2
+            exit 1
+          fi
       - run: npm test
         env:
           LEAK_GUARD_WORDS: ${{ secrets.LEAK_GUARD_WORDS }}
