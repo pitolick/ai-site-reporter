@@ -95,13 +95,20 @@ describe('公開 API', () => {
 });
 
 describe('サイト固有の語が混入していない（LEAK_GUARD_WORDS 必須）', () => {
-  if (FORBIDDEN.length === 0) {
-    it.skip('LEAK_GUARD_WORDS が未設定のため語ベースの検査を skip', () => {});
+  // ドット無しのエントリ（語ベース検査対象）のみを絞り込む
+  const words = FORBIDDEN.filter((w) => !w.includes('.'));
+  if (words.length === 0) {
+    it.skip(
+      FORBIDDEN.length === 0
+        ? 'LEAK_GUARD_WORDS が未設定のため語ベースの検査を skip'
+        : 'LEAK_GUARD_WORDS にドット無しのエントリが無いため語ベースの検査を skip',
+      () => {},
+    );
   } else {
     it.each(targets)('%s', (path) => {
       const content = readTextOrNull(path);
       if (content === null) return;
-      expect(findForbiddenWords(content, FORBIDDEN)).toEqual([]);
+      expect(findForbiddenWords(content, words)).toEqual([]);
     });
   }
 });
@@ -163,13 +170,13 @@ describe('検出ロジックそのものの positive / negative テスト', () =
 
   it('ドット無しのエントリはドメイン検査から除外される', () => {
     // ドット無し = 語ベース検査として扱うため、ドメイン検査では無視される
-    expect(findDomainPatterns('somebrand.example.com', ['somebrand'])).toEqual([]);
+    expect(findDomainPatterns('prefix.somebrand', ['somebrand'])).toEqual([]);
   });
 
   it('メタ文字がエスケープされ、ドット以外の任意文字にマッチしない', () => {
-    // 'exampleXcom' は 'example.com' にマッチしてはいけない
+    // 'sub.exampleXcom' は 'example.com' にマッチしてはいけない
     // （. がメタ文字として使われていないことを確認）
-    expect(findDomainPatterns('exampleXcom should not match', ['example.com'])).toEqual([]);
+    expect(findDomainPatterns('sub.exampleXcom', ['example.com'])).toEqual([]);
   });
 
   it('ドメインリストが空なら何も検出しない', () => {
@@ -184,5 +191,12 @@ describe('検出ロジックそのものの positive / negative テスト', () =
 
   it('語リストが空なら何も検出しない', () => {
     expect(findForbiddenWords('foobarbaz', [])).toEqual([]);
+  });
+
+  it('ドット付きエントリ（ドメイン）だけの場合、語検査は何も検出しない', () => {
+    // 絞り込み後の words リストが空になることで語検査が skip されることを確認
+    const words = ['example.com', 'sample.org'].filter((w) => !w.includes('.'));
+    expect(words.length).toBe(0);
+    expect(findForbiddenWords('example.com and sample.org in text', words)).toEqual([]);
   });
 });
