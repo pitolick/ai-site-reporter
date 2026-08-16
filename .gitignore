@@ -16,6 +16,9 @@ coverage/
 # OS
 .DS_Store
 
+# レビュー作業用の一時ファイル置き場
+.superpowers/
+
 # Env
 .env
 .env.local

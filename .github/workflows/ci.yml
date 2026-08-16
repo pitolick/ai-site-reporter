@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -24,6 +24,8 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
+        env:
+          LEAK_GUARD_WORDS: ${{ secrets.LEAK_GUARD_WORDS }}
 
   dependabot-auto-merge:
     needs: quality
