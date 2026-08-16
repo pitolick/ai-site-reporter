@@ -59,6 +59,12 @@ jobs:
             echo "エラー: LEAK_GUARD_WORDS secret が未設定です。漏洩ガードの語検査が無効のまま publish されるため、処理を中断します。" >&2
             exit 1
           fi
+          # ドメイン検査（ドット付きエントリ）が無効のままでないか確認
+          HAS_DOMAIN_ENTRY="$(echo "$LEAK_GUARD_WORDS" | grep -o '\.' || true)"
+          if [ -z "$HAS_DOMAIN_ENTRY" ]; then
+            echo "エラー: LEAK_GUARD_WORDS にドット付きエントリ（ドメイン検査対象）が無いため、ドメイン検査が無効のまま publish されます。ドメイン検査を有効にするには、環境変数に <サブドメイン>.<運営ドメイン> の形式を含めてください。" >&2
+            exit 1
+          fi
 
       - name: 品質ゲート
         if: steps.check.outputs.skip != 'true'
@@ -74,13 +80,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: タグ作成・push（publish 成功後・best-effort）
-        if: steps.check.outputs.skip != 'true'
-        continue-on-error: true
+      - name: タグ作成・push（タグが存在しないときは publish を skip した実行でも試みる）
         env:
           VERSION: ${{ steps.check.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ -z "$VERSION" ]; then
+            echo "エラー: VERSION が未取得です。package.json の version フィールドが解析できませんでした。" >&2
+            exit 1
+          fi
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           if [ -n "$(git ls-remote --tags "$REMOTE" "refs/tags/v${VERSION}")" ]; then
             echo "タグ v${VERSION} は既に存在。skip。"

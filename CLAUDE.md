@@ -18,7 +18,7 @@ GA4・Search Console・PageSpeed Insights からサイト分析データを取�
 | `src/types.ts` | 共通の型（`DateRange` / `HttpOptions` / `TokenProvider`）と `ApiError` |
 | `src/auth/service-account.ts` | サービスアカウント JSON / base64 からトークンプロバイダを作る（JWT 署名・スコープ別キャッシュ） |
 | `src/collectors/ga4.ts` | GA4 Data API の `runReport` ラッパ・イベント件数・パラメータ分解取得 |
-| `src/collectors/search-console.ts` | Search Console API の `searchAnalytics.query` ラッパ |
+| `src/collectors/search-console.ts` | Search Console API の `searchAnalytics.query` ラッパ。`{ rows, truncated }` を返し、`rowLimit`（未指定なら既定 1,000）による切り詰めの疑いを呼び出し側に伝える |
 | `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得 |
 
 ---
@@ -32,9 +32,22 @@ GA プロパティ ID・サイト URL・イベント名・パラメータ名等�
 - **サイト固有の語（利用側サービス名・イベント名）をコード・テスト・ドキュメントに書かない。** 公開パッケージのため、利用側固有の文字列が混入すると即座に情報漏洩になる。`tests/public-api.test.ts` が機械的に検査する
 - **テストに実在の作品名・人名を書かない**
 
-#### 漏洩ガードの語ベース検査（`LEAK_GUARD_WORDS`）
+#### 漏洩ガード検査（`LEAK_GUARD_WORDS`）
 
-`tests/public-api.test.ts` の語ベース検査（禁止語の混入チェック）は、リポジトリに具体的な語をハードコードしないため既定では skip される。検出したい語を実行環境の `LEAK_GUARD_WORDS` にカンマ区切りで渡すと、その語を対象に検査が有効になる（ドメイン・数値 ID のパターン検査は環境変数に関係なく常に走る）。
+`tests/public-api.test.ts` は以下の 3 種類の検査を行う：
+
+| 検査 | 概要 | 環境変数 |
+| --- | --- | --- |
+| **語ベース検査** | 禁止語（サービス名など）をテキストに含まないかチェック | `LEAK_GUARD_WORDS` に**ドット無し**のエントリ（例 `somebrand`） |
+| **ドメイン検査** | 運営ドメイン（サブドメイン付き）をテキストに含まないかチェック | `LEAK_GUARD_WORDS` に**ドット含む**エントリ（例 `example.com`） |
+| **数値 ID 検査** | 9〜10 桁の数値 ID（GA プロパティ ID 等）をテキストに含まないかチェック | 常時実行（環境変数不要） |
+
+**`LEAK_GUARD_WORDS` の記法:**
+- ドット無し（例 `somebrand,foobar`）→ 語として扱う。大小無視の部分一致で検出
+- ドット含む（例 `example.com,sample.org`）→ ドメインとして扱う。`<サブドメイン>.<ドメイン>` の形にマッチ（サブドメイン必須。ドメイン単体にはマッチしない）
+- 混在可能（例 `somebrand,example.com,foobar`）
+
+**リポジトリには具体的な語やドメインをハードコードしない。** 利用側固有の文字列が混入すると即座に情報漏洩になるため、実行時に `LEAK_GUARD_WORDS` から渡す。空のときは語検査・ドメイン検査 skip、数値 ID 検査のみ常時実行される。
 
 ---
 

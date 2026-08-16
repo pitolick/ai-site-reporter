@@ -22,15 +22,41 @@ function findNumericIds(content: string): string[] {
   return content.match(/\b\d{9,10}\b/g) ?? [];
 }
 
-/** 利用側のドメインパターン（`<サブドメイン>.<運営ドメイン>` 形式）を抽出する。 */
-function findDomainPatterns(content: string): string[] {
-  return content.match(/[a-z0-9-]+\.pitolick\.com/gi) ?? [];
+/**
+ * 利用側のドメインパターン（`<サブドメイン>.<運営ドメイン>` 形式）を抽出する。
+ * domains リストから「ドットを含むエントリ」のみを対象にする
+ * （ドット無し = 語ベース検査。ドット有り = ドメイン検査）。
+ * 正規表現にする前にメタ文字をエスケープする。
+ */
+function findDomainPatterns(content: string, domains: string[]): string[] {
+  const domainEntries = domains.filter((d) => d.includes('.'));
+  if (domainEntries.length === 0) return [];
+
+  // 各ドメインについて `<サブドメイン>.<ドメイン>` の形にマッチさせる
+  const patterns = domainEntries.map((domain) => {
+    // メタ文字をエスケープ（. → \. など）
+    const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // サブドメイン（1 個以上のラベル）+ ドメイン。ドメイン直後に別ラベルが続かない先読み
+    return `[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.${escaped}(?![a-z0-9-]|\\.[a-z0-9-])`;
+  });
+  const regex = new RegExp(patterns.join('|'), 'gi');
+  return content.match(regex) ?? [];
 }
 
 /** 禁止語（大小無視）を検出する。 */
 function findForbiddenWords(content: string, words: string[]): string[] {
   const lower = content.toLowerCase();
   return words.filter((word) => lower.includes(word.toLowerCase()));
+}
+
+/** エントリリストからドット無しの語を選択する。 */
+function selectWordEntries(entries: string[]): string[] {
+  return entries.filter((w) => !w.includes('.'));
+}
+
+/** エントリリストからドット有りのドメインを選択する。 */
+function selectDomainEntries(entries: string[]): string[] {
+  return entries.filter((d) => d.includes('.'));
 }
 
 /**
@@ -74,19 +100,31 @@ describe('公開 API', () => {
     expect(typeof api.fetchPageSpeed).toBe('function');
   });
 
+  it('定数 DEFAULT_ROW_LIMIT を export している', () => {
+    expect(typeof api.DEFAULT_ROW_LIMIT).toBe('number');
+    expect(api.DEFAULT_ROW_LIMIT).toBeGreaterThan(0);
+  });
+
   it('走査対象となる git 追跡ファイルが 1 件以上存在する', () => {
     expect(targets.length).toBeGreaterThan(0);
   });
 });
 
 describe('サイト固有の語が混入していない（LEAK_GUARD_WORDS 必須）', () => {
-  if (FORBIDDEN.length === 0) {
-    it.skip('LEAK_GUARD_WORDS が未設定のため語ベースの検査を skip', () => {});
+  // ドット無しのエントリ（語ベース検査対象）のみを絞り込む
+  const words = selectWordEntries(FORBIDDEN);
+  if (words.length === 0) {
+    it.skip(
+      FORBIDDEN.length === 0
+        ? 'LEAK_GUARD_WORDS が未設定のため語ベースの検査を skip'
+        : 'LEAK_GUARD_WORDS にドット無しのエントリが無いため語ベースの検査を skip',
+      () => {},
+    );
   } else {
     it.each(targets)('%s', (path) => {
       const content = readTextOrNull(path);
       if (content === null) return;
-      expect(findForbiddenWords(content, FORBIDDEN)).toEqual([]);
+      expect(findForbiddenWords(content, words)).toEqual([]);
     });
   }
 });
@@ -101,11 +139,21 @@ describe('実サイトの数値 ID（9〜10 桁）が混入していない', () 
 });
 
 describe('利用側のドメイン識別子（運営ドメインのサブドメイン）が混入していない', () => {
-  it.each(targets)('%s', (path) => {
-    const content = readTextOrNull(path);
-    if (content === null) return;
-    expect(findDomainPatterns(content)).toEqual([]);
-  });
+  const domains = selectDomainEntries(FORBIDDEN);
+  if (FORBIDDEN.length === 0 || domains.length === 0) {
+    it.skip(
+      FORBIDDEN.length === 0
+        ? 'LEAK_GUARD_WORDS が未設定のためドメイン検査を skip'
+        : 'LEAK_GUARD_WORDS にドメイン（ドット含むエントリ）が無いため検査を skip',
+      () => {},
+    );
+  } else {
+    it.each(targets)('%s', (path) => {
+      const content = readTextOrNull(path);
+      if (content === null) return;
+      expect(findDomainPatterns(content, domains)).toEqual([]);
+    });
+  }
 });
 
 describe('検出ロジックそのものの positive / negative テスト', () => {
@@ -118,14 +166,50 @@ describe('検出ロジックそのものの positive / negative テスト', () =
     expect(unexpected).toEqual([]);
   });
 
-  it('サブドメイン付きの運営ドメインを検出する', () => {
-    expect(findDomainPatterns('see https://example.pitolick.com/path')).toEqual([
-      'example.pitolick.com',
+  it('サブドメイン付きのドメイン（ドット含むエントリ）を検出する', () => {
+    expect(findDomainPatterns('see https://example.example.com/path', ['example.com'])).toEqual([
+      'example.example.com',
     ]);
   });
 
-  it('サブドメイン無しの運営ドメイン単体は検出しない', () => {
-    expect(findDomainPatterns('pitolick.com はサブドメインが無い')).toEqual([]);
+  it('サブドメイン無しのドメイン単体は検出しない', () => {
+    expect(findDomainPatterns('example.com はサブドメインが無い', ['example.com'])).toEqual([]);
+  });
+
+  it('ホスト名ラベルが続く誤検出を防ぐ（sub.example.com.invalid は sub.example.com を検出しない）', () => {
+    // 先読みアサーションが無いと sub.example.com.invalid から sub.example.com を拾ってしまう
+    expect(findDomainPatterns('sub.example.com.invalid', ['example.com'])).toEqual([]);
+  });
+
+  it('深いサブドメイン（a.b.example.com）も検出する', () => {
+    // a.b.example.com は `a.b` というサブドメイン層の右隣が example.com であり、
+    // その後に別のラベルが続かない。先読みをすり抜ける正規な形
+    expect(findDomainPatterns('a.b.example.com is deep', ['example.com'])).toEqual([
+      'a.b.example.com',
+    ]);
+  });
+
+  it('複数ドメインを同時にチェックできる', () => {
+    const content = 'check https://api.example.com and https://cdn.sample.org here';
+    expect(findDomainPatterns(content, ['example.com', 'sample.org'])).toEqual([
+      'api.example.com',
+      'cdn.sample.org',
+    ]);
+  });
+
+  it('ドット無しのエントリはドメイン検査から除外される', () => {
+    // ドット無し = 語ベース検査として扱うため、ドメイン検査では無視される
+    expect(findDomainPatterns('prefix.somebrand', ['somebrand'])).toEqual([]);
+  });
+
+  it('メタ文字がエスケープされ、ドット以外の任意文字にマッチしない', () => {
+    // 'sub.exampleXcom' は 'example.com' にマッチしてはいけない
+    // （. がメタ文字として使われていないことを確認）
+    expect(findDomainPatterns('sub.exampleXcom', ['example.com'])).toEqual([]);
+  });
+
+  it('ドメインリストが空なら何も検出しない', () => {
+    expect(findDomainPatterns('example.example.com exists', [])).toEqual([]);
   });
 
   it('語リストを渡すとその語を検出する', () => {
@@ -136,5 +220,25 @@ describe('検出ロジックそのものの positive / negative テスト', () =
 
   it('語リストが空なら何も検出しない', () => {
     expect(findForbiddenWords('foobarbaz', [])).toEqual([]);
+  });
+
+  it('selectWordEntries がドット無しのエントリだけを選択する', () => {
+    expect(selectWordEntries(['alpha', 'example.com', 'beta', 'sample.org'])).toEqual([
+      'alpha',
+      'beta',
+    ]);
+  });
+
+  it('selectDomainEntries がドット有りのエントリだけを選択する', () => {
+    expect(selectDomainEntries(['alpha', 'example.com', 'beta', 'sample.org'])).toEqual([
+      'example.com',
+      'sample.org',
+    ]);
+  });
+
+  it('ドット付きエントリ（ドメイン）だけの場合、selectWordEntries は空配列を返す', () => {
+    const words = selectWordEntries(['example.com', 'sample.org']);
+    expect(words.length).toBe(0);
+    expect(findForbiddenWords('example.com and sample.org in text', words)).toEqual([]);
   });
 });
