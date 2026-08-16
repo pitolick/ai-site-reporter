@@ -1,0 +1,92 @@
+name: Release (GitHub Packages)
+
+# main への push で package.json の version を検知し、まだ registry に publish
+# されていない version の場合のみ GitHub Packages へ publish する。
+# 冪等判定は「registry 上に当該 version が存在するか」で行う。
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: 0
+      LEAK_GUARD_WORDS: ${{ secrets.LEAK_GUARD_WORDS }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: publish 要否判定（registry に当該 version が存在するか）
+        id: check
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          PUBLISHED="$(npm view "@pitolick/ai-site-reporter@${VERSION}" version --registry https://npm.pkg.github.com 2>/dev/null || true)"
+          if [ -n "$PUBLISHED" ]; then
+            echo "v${VERSION} は既に registry に存在。skip します。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "v${VERSION} は未 publish。publish に進みます。"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 依存インストール
+        if: steps.check.outputs.skip != 'true'
+        run: npm ci
+
+      - name: 漏洩ガード環境変数の確認（publish 経路では必須）
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          if [ -z "$LEAK_GUARD_WORDS" ]; then
+            echo "エラー: LEAK_GUARD_WORDS secret が未設定です。漏洩ガードの語検査が無効のまま publish されるため、処理を中断します。" >&2
+            exit 1
+          fi
+
+      - name: 品質ゲート
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          npm run lint
+          npm run format:check
+          npm run typecheck
+          npm test
+
+      - name: Publish
+        if: steps.check.outputs.skip != 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: タグ作成・push（publish 成功後・best-effort）
+        if: steps.check.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ -n "$(git ls-remote --tags "$REMOTE" "refs/tags/v${VERSION}")" ]; then
+            echo "タグ v${VERSION} は既に存在。skip。"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push "$REMOTE" "v${VERSION}"
