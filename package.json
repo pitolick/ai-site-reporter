@@ -1,6 +1,6 @@
 {
   "name": "@pitolick/ai-site-reporter",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "GA4 / Search Console / PageSpeed からサイト分析データを取得する汎用 TypeScript ライブラリ",
   "license": "MIT",
   "repository": {
