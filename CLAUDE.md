@@ -57,7 +57,7 @@ GA プロパティ ID・サイト URL・イベント名・パラメータ名等�
 | 項目 | 採用技術 |
 | --- | --- |
 | 言語 | TypeScript 6.0+ |
-| ランタイム | Node.js 20+ (ESM) |
+| ランタイム | Node.js 20+ (ESM)（パッケージ利用者向け。開発と CI は Node 22 が必要: vitest 5 / lint-staged 17） |
 | 外部 API | GA4 Data API / Search Console API / PageSpeed Insights API |
 | 外部依存 | なし（`node:crypto` + `fetch` のみで認証・API 呼び出しを完結させる） |
 | テスト | Vitest（外部 API はすべてモック） |

@@ -134,6 +134,19 @@ describe('fetchPageSpeed', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('options.retries: 1 でも 5xx が続けば合計 2 回で ApiError（再試行が二重にならない）', async () => {
+    const fetchImpl = vi.fn(async () => serverError());
+
+    await expect(
+      fetchPageSpeed(
+        'https://example.com/',
+        { strategy: 'mobile' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 1 },
+      ),
+    ).rejects.toThrow(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('options.retries 未指定なら再試行しない', async () => {
     const fetchImpl = vi.fn(async () => serverError());
 

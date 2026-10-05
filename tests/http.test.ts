@@ -180,7 +180,7 @@ describe('fetchJson の 5xx 再試行', () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     const pending = run(fetchImpl, { retries: 1, retryDelayMs: 10_000 });
-    // 実装前（RED）は即座に reject されるので、未処理の reject として二重に報告されないよう受けておく
+    // 途中で reject されても未処理の reject として二重に報告されないよう受けておく
     pending.catch(() => {});
 
     await vi.advanceTimersByTimeAsync(9_999);
