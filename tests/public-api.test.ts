@@ -95,8 +95,10 @@ describe('公開 API', () => {
     expect(typeof api.createServiceAccountAuth).toBe('function');
     expect(typeof api.runReport).toBe('function');
     expect(typeof api.fetchEventCounts).toBe('function');
+    expect(typeof api.runReportAll).toBe('function');
     expect(typeof api.fetchParameterBreakdown).toBe('function');
     expect(typeof api.querySearchAnalytics).toBe('function');
+    expect(typeof api.querySearchAnalyticsAll).toBe('function');
     expect(typeof api.fetchPageSpeed).toBe('function');
   });
 

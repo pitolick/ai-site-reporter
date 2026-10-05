@@ -82,6 +82,55 @@ export async function runReport(
   };
 }
 
+/** GA4 Data API が 1 リクエストで返す行数の上限（公式リファレンス `limit`）。 */
+const GA4_MAX_ROWS_PER_REQUEST = 250_000;
+
+/** `runReportAll` の request。`limit` / `offset` は関数が制御するので型で禁止する。 */
+export type RunReportAllRequest = Record<string, unknown> & { limit?: never; offset?: never };
+
+/**
+ * `runReport` を `offset` でページングし、全行を 1 つの `Ga4Report` にまとめて返す。
+ * ページサイズは API の上限（250,000 行）なので、通常は 1 リクエストで終わる。
+ *
+ * `limit` / `offset` はこの関数が制御するため、`request` の型で禁止している
+ * （「上位 N 件」のつもりで渡した呼び出しを黙って全件にしないため）。リテラルも
+ * 型が推論された変数（`const req = { ..., limit: 10 }`）も型エラーになる。黙って
+ * すり抜けるのは `Record<string, unknown>` と注釈した変数や JS からの呼び出しで、
+ * 渡された値はこの関数の値で上書きされる。変数で組み立てるときは
+ * `RunReportAllRequest` で注釈する。
+ *
+ * 総行数は最初のページの `rowCount` を使う。途中で空ページが返ったら打ち切り、
+ * `rows.length < rowCount` のまま返すので、呼び出し側は `runReport` と同じく
+ * 両者の突合で欠損を検出できる（空ページの `rowCount` で上書きしないのは、
+ * proto3 の JSON が 0 を省くため `runReport` がそれを `rows.length`＝0 で埋め、
+ * 欠損が見えなくなるから）。
+ */
+export async function runReportAll(
+  auth: TokenProvider,
+  propertyId: string,
+  request: RunReportAllRequest,
+  options: HttpOptions = {},
+): Promise<Ga4Report> {
+  const fetchPage = (offset: number) =>
+    runReport(auth, propertyId, { ...request, limit: GA4_MAX_ROWS_PER_REQUEST, offset }, options);
+
+  const first = await fetchPage(0);
+  const rows: Ga4Row[] = [...first.rows];
+  while (rows.length < first.rowCount) {
+    const page = await fetchPage(rows.length);
+    if (page.rows.length === 0) break;
+    // rows.push(...page.rows) は 25 万行で引数の上限を超えるため 1 行ずつ積む。
+    for (const row of page.rows) rows.push(row);
+  }
+
+  return {
+    dimensionHeaders: first.dimensionHeaders,
+    metricHeaders: first.metricHeaders,
+    rows,
+    rowCount: first.rowCount,
+  };
+}
+
 export interface EventCount {
   eventName: string;
   count: number;
@@ -146,11 +195,11 @@ export interface ParameterBreakdown {
   notSetCount: number;
   /** total が 0 のときは 0 を返す（NaN にしない）。 */
   notSetRate: number;
-  /** GA4 が返した総マッチ行数（`limit` とは独立。`rows.length` より大きいことがある）。 */
+  /** GA4 が返した総行数（最初のページの値）。 */
   rowCount: number;
   /**
-   * `rows.length < rowCount`。true のときは `limit` で切り詰められており、
-   * `total` / `notSetRate` は取得できた `rows` だけを分母にした値になる。
+   * `rows.length < rowCount`。ページングの途中で空ページが返り打ち切った場合に true。
+   * そのときの `total` / `notSetRate` は取得できた `rows` だけを分母にした値。
    */
   truncated: boolean;
 }
@@ -159,17 +208,17 @@ export interface ParameterBreakdown {
  * 指定イベントを指定パラメータで分解し、(not set) の件数と率を返す。
  * パラメータ名はイベントスコープのカスタムディメンションとして解決される。
  *
- * 異なり値が `limit`（既定 200）を超えると GA4 は上位 `limit` 行だけを返す。
- * その場合 `truncated` が true になるので、`notSetRate` を「もっともらしいが
- * 誤った値」として扱わないよう呼び出し側で確認すること。
+ * `notSetRate` は全行を分母にしないと「もっともらしいが誤った値」になるため、
+ * 異なり値の数に関わらず `runReportAll` で全件を取る。`truncated` が true に
+ * なるのは、ページングの途中で API が空ページを返して打ち切ったときだけ。
  */
 export async function fetchParameterBreakdown(
   auth: TokenProvider,
   propertyId: string,
-  params: { dateRange: DateRange; eventName: string; parameter: string; limit?: number },
+  params: { dateRange: DateRange; eventName: string; parameter: string },
   options: HttpOptions = {},
 ): Promise<ParameterBreakdown> {
-  const report = await runReport(
+  const report = await runReportAll(
     auth,
     propertyId,
     {
@@ -179,7 +228,6 @@ export async function fetchParameterBreakdown(
       dimensionFilter: {
         filter: { fieldName: 'eventName', stringFilter: { value: params.eventName } },
       },
-      limit: params.limit ?? 200,
     },
     options,
   );

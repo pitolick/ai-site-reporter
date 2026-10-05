@@ -1,4 +1,5 @@
 import { fetchJson, resolveFetch } from '../http.js';
+import { ApiError } from '../types.js';
 import type { DateRange, HttpOptions, TokenProvider } from '../types.js';
 
 export const SEARCH_CONSOLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
@@ -39,8 +40,7 @@ export interface SearchAnalyticsResult {
    * たとえ `truncated: false` でも、別の理由で対象データが欠落している可能性がある。
    *
    * throw はしない。「上位 N 件だけ欲しい」という正当な使い方があるため、
-   * 判断は呼び出し側に委ねる。全件の確認が必要なら、`rowLimit` を上げるか
-   * `startRow` でページングし、返ってきた行数が要求行数を下回るまで続けること。
+   * 判断は呼び出し側に委ねる。全件が必要なら `querySearchAnalyticsAll` を使うこと。
    */
   truncated: boolean;
 }
@@ -75,4 +75,63 @@ export async function querySearchAnalytics(
   const rows = body.rows ?? [];
   const effectiveLimit = request.rowLimit ?? DEFAULT_ROW_LIMIT;
   return { rows, truncated: rows.length === effectiveLimit };
+}
+
+/** Search Console API の `rowLimit` の上限（公式ドキュメント）。 */
+const MAX_ROW_LIMIT = 25_000;
+
+/**
+ * `querySearchAnalyticsAll` の request。`rowLimit` / `startRow` は関数が制御するので
+ * 型で禁止する（`SearchAnalyticsRequest` は任意のキーを受ける型なので `Omit` は使えない）。
+ */
+export type SearchAnalyticsAllRequest = SearchAnalyticsRequest & {
+  rowLimit?: never;
+  startRow?: never;
+};
+
+/**
+ * ページングの打ち切り（データを含むページが 100 ページ＝250 万行まで）。API が
+ * `startRow` を無視して行を返し続けるような異常時に無限ループしないための安全弁。
+ * ちょうど上限で終わる結果を誤ってエラーにしないよう、終端確認の 0 行応答用に
+ * もう 1 回だけ多く叩く（最大 `MAX_PAGES + 1` リクエスト）。
+ */
+const MAX_PAGES = 100;
+
+/**
+ * `querySearchAnalytics` を `startRow` でページングし、全行を返す。
+ * 公式の手順（`rowLimit` を 25,000 にし、**0 行の応答が返るまで** `startRow` を
+ * 進める）に従う。そのため全件が 1 ページに収まっても終端確認で 1 回多く叩く。
+ *
+ * `rowLimit` / `startRow` はこの関数が制御するため、`request` の型で禁止している
+ * （リテラルも型が推論された変数も型エラーになる。黙ってすり抜けるのは `any` 注釈の
+ * 変数や JS からの呼び出しで、渡された値は上書きされる。`SearchAnalyticsRequest` で
+ * 注釈した変数は `rowLimit?: number` が `never` と衝突して渡せないので、変数で
+ * 組み立てるときは `SearchAnalyticsAllRequest` で注釈する）。
+ * 合計値（`dimensions: []`）は 1 行しか返らないので `querySearchAnalytics` を使うこと。
+ *
+ * 「全件」はこの API が公開している範囲の全件で、Search Console 側の内部制限
+ * （1 日・検索タイプあたり 50,000 行など）で落ちた行までは取り戻せない。
+ */
+export async function querySearchAnalyticsAll(
+  auth: TokenProvider,
+  siteUrl: string,
+  request: SearchAnalyticsAllRequest,
+  options: HttpOptions = {},
+): Promise<SearchAnalyticsRow[]> {
+  const rows: SearchAnalyticsRow[] = [];
+  for (let page = 0; page <= MAX_PAGES; page++) {
+    const result = await querySearchAnalytics(
+      auth,
+      siteUrl,
+      { ...request, rowLimit: MAX_ROW_LIMIT, startRow: rows.length },
+      options,
+    );
+    if (result.rows.length === 0) return rows;
+    for (const row of result.rows) rows.push(row);
+  }
+  throw new ApiError(
+    'search-console',
+    200,
+    `${MAX_PAGES} ページ取得しても終端（0 行の応答）に達しなかった。startRow が効いていないか、期間やディメンションを分けて取るべき規模の可能性がある`,
+  );
 }
