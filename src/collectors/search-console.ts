@@ -90,8 +90,10 @@ export type SearchAnalyticsAllRequest = SearchAnalyticsRequest & {
 };
 
 /**
- * ページングの打ち切り（100 ページ＝250 万行）。API が `startRow` を無視して行を
- * 返し続けるような異常時に無限ループしないための安全弁。
+ * ページングの打ち切り（データを含むページが 100 ページ＝250 万行まで）。API が
+ * `startRow` を無視して行を返し続けるような異常時に無限ループしないための安全弁。
+ * ちょうど上限で終わる結果を誤ってエラーにしないよう、終端確認の 0 行応答用に
+ * もう 1 回だけ多く叩く（最大 `MAX_PAGES + 1` リクエスト）。
  */
 const MAX_PAGES = 100;
 
@@ -117,7 +119,7 @@ export async function querySearchAnalyticsAll(
   options: HttpOptions = {},
 ): Promise<SearchAnalyticsRow[]> {
   const rows: SearchAnalyticsRow[] = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page <= MAX_PAGES; page++) {
     const result = await querySearchAnalytics(
       auth,
       siteUrl,

@@ -218,8 +218,35 @@ describe('querySearchAnalyticsAll', () => {
         { fetchImpl: fetchImpl as unknown as typeof fetch },
       ),
     ).rejects.toThrow(ApiError);
-    expect(fetchImpl).toHaveBeenCalledTimes(100);
+    expect(fetchImpl).toHaveBeenCalledTimes(101);
   });
+
+  it('データを含むページがちょうど上限（100 ページ）でも、終端の空応答が来ればエラーにしない', async () => {
+    const fullPage = JSON.stringify({
+      rows: Array.from({ length: 25000 }, (_, i) => ({
+        keys: [`q-${i}`],
+        clicks: 1,
+        impressions: 1,
+        ctr: 1,
+        position: 1,
+      })),
+    });
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      return new Response(calls <= 100 ? fullPage : '{}', { status: 200 });
+    });
+
+    const rows = await querySearchAnalyticsAll(
+      auth,
+      'sc-domain:example.com',
+      { ...range, dimensions: ['query'] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(rows).toHaveLength(2_500_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(101);
+  }, 20_000);
 
   it('rowLimit / startRow は型で弾く', () => {
     // 複数行のリテラルでは型エラーがプロパティの行に出るので、directive はその直前に置く
