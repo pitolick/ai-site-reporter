@@ -109,6 +109,7 @@ export function createServiceAccountAuth(raw: string, options: AuthOptions = {})
               assertion,
             }).toString(),
           },
+          options,
         );
         if (!body.access_token || typeof body.access_token !== 'string') {
           throw new ApiError(

@@ -24,6 +24,20 @@ function tokenResponse(token: string, expiresIn = 3600) {
 }
 
 describe('createServiceAccountAuth', () => {
+  it('retries 指定時はトークン取得の 5xx を再試行する', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"error":{"message":"backend error"}}', { status: 500 }))
+      .mockResolvedValueOnce(tokenResponse('token-retry'));
+    const auth = createServiceAccountAuth(rawJson, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      retries: 1,
+    });
+
+    await expect(auth.getToken(['scope-a'])).resolves.toBe('token-retry');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('1 行 JSON の資格情報でトークンを取得できる', async () => {
     const fetchImpl = vi.fn(async () => tokenResponse('token-1'));
     const auth = createServiceAccountAuth(rawJson, {

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fetchJson, resolveFetch } from '../src/http.js';
+import { ApiError } from '../src/types.js';
 
 function textResponse(body: string, status: number, contentType = 'text/html') {
   return new Response(body, { status, headers: { 'content-type': contentType } });
@@ -105,5 +106,100 @@ describe('resolveFetch', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('fetchJson の 5xx 再試行', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const serverError = () => jsonResponse({ error: { message: 'backend error' } }, 500);
+  const asFetch = (fn: unknown) => fn as typeof fetch;
+  const run = (fn: unknown, options?: { retries?: number; retryDelayMs?: number }) =>
+    fetchJson<{ ok: boolean }>('test-api', asFetch(fn), 'https://example.com/', undefined, options);
+
+  it('retries 指定時は 5xx を再試行し、成功した応答を返す', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(serverError())
+      .mockResolvedValueOnce(serverError())
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const result = await run(fetchImpl, { retries: 2 });
+
+    expect(result.body).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries 回を使い切ったら最後の ApiError を投げる', async () => {
+    const fetchImpl = vi.fn(async () => serverError());
+
+    await expect(run(fetchImpl, { retries: 2 })).rejects.toThrow(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('JSON でない 502 の本文も再試行する', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textResponse('<html>Bad Gateway</html>', 502))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const result = await run(fetchImpl, { retries: 1 });
+
+    expect(result.body).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([400, 429])('%i は再試行しない', async (status) => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: { message: 'no' } }, status));
+
+    await expect(run(fetchImpl, { retries: 2 })).rejects.toThrow(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetch 自体の reject（ネットワーク例外）は再試行しない', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(run(fetchImpl, { retries: 2 })).rejects.toThrow(TypeError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries 未指定なら再試行しない', async () => {
+    const fetchImpl = vi.fn(async () => serverError());
+
+    await expect(run(fetchImpl)).rejects.toThrow(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('retryDelayMs だけ待ってから再試行する', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(serverError())
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const pending = run(fetchImpl, { retries: 1, retryDelayMs: 10_000 });
+    // 実装前（RED）は即座に reject されるので、未処理の reject として二重に報告されないよう受けておく
+    pending.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toMatchObject({ body: { ok: true } });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { retries: -1 },
+    { retries: 1.5 },
+    { retries: Number.NaN },
+    { retryDelayMs: -1 },
+    { retryDelayMs: Number.NaN },
+  ])('%o は RangeError（NaN で無限に再試行しない）', async (invalid) => {
+    const fetchImpl = vi.fn();
+
+    await expect(run(fetchImpl, invalid)).rejects.toThrow(RangeError);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -69,6 +69,7 @@ export async function runReport(
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(request),
     },
+    options,
   );
 
   return {

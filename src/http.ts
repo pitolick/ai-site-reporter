@@ -1,4 +1,5 @@
 import { ApiError } from './types.js';
+import type { HttpOptions } from './types.js';
 
 /** ApiError のメッセージに含める本文の最大長。長すぎるレスポンスを丸めるため。 */
 const BODY_PREVIEW_LENGTH = 500;
@@ -31,7 +32,7 @@ export interface FetchJsonResult<T> {
  * 読み、`JSON.parse` を試みたうえで、非 2xx またはパース失敗のときに
  * `ApiError` を投げる。
  */
-export async function fetchJson<T>(
+async function fetchJsonOnce<T>(
   api: string,
   fetchImpl: typeof fetch,
   url: string,
@@ -57,6 +58,40 @@ export async function fetchJson<T>(
   }
 
   return { status: res.status, body: body as T };
+}
+
+/**
+ * `fetchJsonOnce` を呼び、5xx の `ApiError` に限って `options.retries` 回まで再試行する。
+ * 4xx（キー誤り・権限・quota 超過の 429）は繰り返しても直らず、`fetch` 自体の reject
+ * （ネットワーク・タイムアウト）も再試行しない。
+ */
+export async function fetchJson<T>(
+  api: string,
+  fetchImpl: typeof fetch,
+  url: string,
+  init?: RequestInit,
+  options: Pick<HttpOptions, 'retries' | 'retryDelayMs'> = {},
+): Promise<FetchJsonResult<T>> {
+  const retries = options.retries ?? 0;
+  const retryDelayMs = options.retryDelayMs ?? 0;
+  if (!Number.isInteger(retries) || retries < 0) {
+    throw new RangeError(`retries は 0 以上の整数で指定すること（受け取った値: ${retries}）`);
+  }
+  if (!Number.isFinite(retryDelayMs) || retryDelayMs < 0) {
+    throw new RangeError(
+      `retryDelayMs は 0 以上の数で指定すること（受け取った値: ${retryDelayMs}）`,
+    );
+  }
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchJsonOnce<T>(api, fetchImpl, url, init);
+    } catch (error) {
+      const retryable = error instanceof ApiError && error.status >= 500;
+      if (!retryable || attempt >= retries) throw error;
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
 }
 
 function extractErrorMessage(body: unknown): string | undefined {
