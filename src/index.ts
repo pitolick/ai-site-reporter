@@ -6,18 +6,27 @@ export {
   GA4_SCOPE,
   NOT_SET,
   runReport,
+  runReportAll,
   fetchEventCounts,
   fetchParameterBreakdown,
 } from './collectors/ga4.js';
-export type { Ga4Report, Ga4Row, EventCount, ParameterBreakdown } from './collectors/ga4.js';
+export type {
+  Ga4Report,
+  Ga4Row,
+  EventCount,
+  ParameterBreakdown,
+  RunReportAllRequest,
+} from './collectors/ga4.js';
 export {
   SEARCH_CONSOLE_SCOPE,
   DEFAULT_ROW_LIMIT,
   querySearchAnalytics,
+  querySearchAnalyticsAll,
 } from './collectors/search-console.js';
 export type {
   SearchAnalyticsRow,
   SearchAnalyticsRequest,
+  SearchAnalyticsAllRequest,
   SearchAnalyticsResult,
 } from './collectors/search-console.js';
 export { fetchPageSpeed } from './collectors/pagespeed.js';

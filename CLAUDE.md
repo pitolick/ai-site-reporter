@@ -17,9 +17,9 @@ GA4・Search Console・PageSpeed Insights からサイト分析データを取�
 | --- | --- |
 | `src/types.ts` | 共通の型（`DateRange` / `HttpOptions` / `TokenProvider`）と `ApiError` |
 | `src/auth/service-account.ts` | サービスアカウント JSON / base64 からトークンプロバイダを作る（JWT 署名・スコープ別キャッシュ） |
-| `src/collectors/ga4.ts` | GA4 Data API の `runReport` ラッパ・イベント件数・パラメータ分解取得 |
-| `src/collectors/search-console.ts` | Search Console API の `searchAnalytics.query` ラッパ。`{ rows, truncated }` を返し、`rowLimit`（未指定なら既定 1,000）による切り詰めの疑いを呼び出し側に伝える |
-| `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得 |
+| `src/collectors/ga4.ts` | GA4 Data API の `runReport` ラッパ・イベント件数・パラメータ分解取得。`runReportAll` は `offset` で全ページ取得し、`fetchParameterBreakdown` は常に全件を取る |
+| `src/collectors/search-console.ts` | Search Console API の `searchAnalytics.query` ラッパ。`{ rows, truncated }` を返し、`rowLimit`（未指定なら既定 1,000）による切り詰めの疑いを呼び出し側に伝える。`querySearchAnalyticsAll` は `startRow` で全ページ取得する |
+| `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得。`retries` / `retryDelayMs` で 5xx のみ再試行できる |
 
 ---
 

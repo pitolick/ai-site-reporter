@@ -34,7 +34,7 @@ const breakdown = await fetchParameterBreakdown(auth, propertyId, {
   eventName: 'your_event',
   parameter: 'your_parameter',
 });
-if (breakdown.truncated) throw new Error('breakdown is truncated by limit; narrow the query');
+if (breakdown.truncated) throw new Error('breakdown is incomplete; retry later');
 console.log(breakdown.notSetRate);
 ```
 
@@ -46,7 +46,7 @@ console.log(breakdown.notSetRate);
 - **用途ごとにクエリを分ける。** 例えば広告収益のメトリックは、環境によって取得可否が変わる。基本 KPI と同じ `runReport` に混ぜると、片方が取れないだけで全体が落ちる。`Promise.allSettled` で受けて、落ちた群だけを欠損として扱う設計にすること
 - **GA4 のカスタムディメンションは遡及適用されない。** 登録前に届いたイベントは、あとからそのディメンションで分解できない
 - **GA4 のデータ保持期間**（イベントデータ）を超えた期間は、カスタムディメンションを使うクエリでは取得できない
-- **Search Console の `querySearchAnalytics` は全件取得を保証しない。** `rowLimit`（既定 1,000・最大 25,000）で切り詰められることがあり、応答に総行数は含まれない。`truncated: false` でも API の内部制限により対象データが欠落している可能性があるため、全行を確認したい場合は `rowLimit` を上げるか `startRow` でページングし、返ってきた行数が要求行数を下回ることで全件であることを確認すること
+- **Search Console の `querySearchAnalytics` は全件取得を保証しない。** `rowLimit`（既定 1,000・最大 25,000）で切り詰められることがあり、応答に総行数は含まれない。`truncated: false` でも API の内部制限により対象データが欠落している可能性があるため、全行が必要な場合は `querySearchAnalyticsAll` を使うこと
 
 ## API
 
@@ -54,10 +54,12 @@ console.log(breakdown.notSetRate);
 | --- | --- |
 | `createServiceAccountAuth(raw, options?)` | サービスアカウント JSON / base64 からトークンプロバイダを作る（スコープ別にキャッシュ） |
 | `runReport(auth, propertyId, request, options?)` | GA4 Data API の `runReport` の薄いラッパ |
+| `runReportAll(auth, propertyId, request, options?)` | `runReport` を GA4 の `offset` で全ページ取得する（ページサイズ 250,000・総数は 1 ページ目の `rowCount`）。空ページが返ったらそこで打ち切るため、`rows.length < rowCount` になりうる。`limit` / `offset` は型で禁止 |
 | `fetchEventCounts(auth, propertyId, params, options?)` | イベント名別の件数。指定したイベントが返らなければ 0 件として補完する。GA4 応答が `limit`（既定 200）で切り詰められていた場合は 0 件を捏造せず `ApiError` を throw する |
-| `fetchParameterBreakdown(auth, propertyId, params, options?)` | 指定イベントを指定パラメータで分解し `(not set)` の件数と率を返す。応答が `limit`（既定 200）件を超えると `rowCount` は総マッチ行数を保持したまま `truncated: true` になるので、`notSetRate` 等の分母が不完全でないか呼び出し側で確認すること |
-| `querySearchAnalytics(auth, siteUrl, request, options?)` | Search Console の `searchAnalytics.query` の薄いラッパ。`{ rows, truncated }` を返す。`rows.length` が `rowLimit`（未指定なら既定 1,000）と一致すると `truncated: true` になる。`truncated: false` でも API 内部制限により全件取得は保証されないため、全行が必要な場合は `rowLimit` を上げるか `startRow` でページングし、返ってきた行数で全件を判定すること |
-| `fetchPageSpeed(url, params, options?)` | PageSpeed Insights（API キーは任意） |
+| `fetchParameterBreakdown(auth, propertyId, params, options?)` | 指定イベントを指定パラメータで分解し `(not set)` の件数と率を返す。常に `runReportAll` で全件をページングして取る（`limit` は指定できない）。`truncated` はページングが空ページで打ち切られたときだけ `true` になるので、`notSetRate` 等の分母が不完全でないか呼び出し側で確認すること |
+| `querySearchAnalytics(auth, siteUrl, request, options?)` | Search Console の `searchAnalytics.query` の薄いラッパ。`{ rows, truncated }` を返す。`rows.length` が `rowLimit`（未指定なら既定 1,000）と一致すると `truncated: true` になる。`truncated: false` でも API 内部制限により全件取得は保証されないため、全行が必要な場合は `querySearchAnalyticsAll` を使うこと |
+| `querySearchAnalyticsAll(auth, siteUrl, request, options?)` | `querySearchAnalytics` を `startRow` で全ページ取得し、`SearchAnalyticsRow[]` を返す（ページサイズ 25,000・0 行の応答で終了・100 ページで `ApiError`）。`rowLimit` / `startRow` は型で禁止 |
+| `fetchPageSpeed(url, params, options?)` | PageSpeed Insights（API キーは任意）。`retries`（既定 0）と `retryDelayMs`（既定 0）を指定すると、5xx の `ApiError` に限り待ってから再試行する |
 | `DEFAULT_ROW_LIMIT` | Search Console API の既定行数制限（`querySearchAnalytics` で `rowLimit` 未指定時の値） |
 
 ## ライセンス
