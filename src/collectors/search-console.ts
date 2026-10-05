@@ -101,7 +101,10 @@ const MAX_PAGES = 100;
  * 進める）に従う。そのため全件が 1 ページに収まっても終端確認で 1 回多く叩く。
  *
  * `rowLimit` / `startRow` はこの関数が制御するため、`request` の型で禁止している
- * （型で止まるのはリテラルで渡した場合だけで、それ以外は黙って上書きされる）。
+ * （リテラルも型が推論された変数も型エラーになる。黙ってすり抜けるのは `any` 注釈の
+ * 変数や JS からの呼び出しで、渡された値は上書きされる。`SearchAnalyticsRequest` で
+ * 注釈した変数は `rowLimit?: number` が `never` と衝突して渡せないので、変数で
+ * 組み立てるときは `SearchAnalyticsAllRequest` で注釈する）。
  * 合計値（`dimensions: []`）は 1 行しか返らないので `querySearchAnalytics` を使うこと。
  *
  * 「全件」はこの API が公開している範囲の全件で、Search Console 側の内部制限
@@ -127,6 +130,6 @@ export async function querySearchAnalyticsAll(
   throw new ApiError(
     'search-console',
     200,
-    `${MAX_PAGES} ページ取得しても終端（0 行の応答）に達しなかった。startRow が効いていない可能性がある`,
+    `${MAX_PAGES} ページ取得しても終端（0 行の応答）に達しなかった。startRow が効いていないか、期間やディメンションを分けて取るべき規模の可能性がある`,
   );
 }

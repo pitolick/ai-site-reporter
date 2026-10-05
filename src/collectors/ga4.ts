@@ -93,9 +93,11 @@ export type RunReportAllRequest = Record<string, unknown> & { limit?: never; off
  * ページサイズは API の上限（250,000 行）なので、通常は 1 リクエストで終わる。
  *
  * `limit` / `offset` はこの関数が制御するため、`request` の型で禁止している
- * （「上位 N 件」のつもりで渡した呼び出しを黙って全件にしないため）。型で止まる
- * のはリテラルで渡した場合だけで、`Record<string, unknown>` と注釈した変数や JS
- * からの呼び出しで渡された値は、黙ってこの関数の値で上書きされる。
+ * （「上位 N 件」のつもりで渡した呼び出しを黙って全件にしないため）。リテラルも
+ * 型が推論された変数（`const req = { ..., limit: 10 }`）も型エラーになる。黙って
+ * すり抜けるのは `Record<string, unknown>` と注釈した変数や JS からの呼び出しで、
+ * 渡された値はこの関数の値で上書きされる。変数で組み立てるときは
+ * `RunReportAllRequest` で注釈する。
  *
  * 総行数は最初のページの `rowCount` を使う。途中で空ページが返ったら打ち切り、
  * `rows.length < rowCount` のまま返すので、呼び出し側は `runReport` と同じく
