@@ -151,6 +151,19 @@ describe('fetchPageSpeed', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('ネットワーク例外は retries 指定でも再試行しない', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(
+      fetchPageSpeed(
+        'https://example.com/',
+        { strategy: 'mobile', retries: 2 },
+        { fetchImpl: fetchImpl as unknown as typeof fetch },
+      ),
+    ).rejects.toThrow(TypeError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('retries 未指定なら再試行しない（従来どおり）', async () => {
     const fetchImpl = vi.fn(async () => serverError());
 

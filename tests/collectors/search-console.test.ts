@@ -183,7 +183,12 @@ describe('querySearchAnalyticsAll', () => {
 
     expect(rows).toHaveLength(25003);
     expect(rows.at(-1)?.keys).toEqual(['q-25002']);
-    expect(scBodyOf(fetchImpl, 0)).toMatchObject({ rowLimit: 25000, startRow: 0 });
+    expect(scBodyOf(fetchImpl, 0)).toMatchObject({
+      ...range,
+      dimensions: ['query'],
+      rowLimit: 25000,
+      startRow: 0,
+    });
     expect(scBodyOf(fetchImpl, 1)).toMatchObject({ rowLimit: 25000, startRow: 25000 });
     expect(scBodyOf(fetchImpl, 2)).toMatchObject({ rowLimit: 25000, startRow: 25003 });
   });
