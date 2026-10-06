@@ -14,6 +14,27 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('querySearchAnalytics', () => {
+  it('options.retries により 503 を再試行して成功する', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'unavailable' } }, 503))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          rows: [{ keys: ['sample query'], clicks: 1, impressions: 4, ctr: 0.25, position: 4 }],
+        }),
+      );
+
+    const result = await querySearchAnalytics(
+      auth,
+      'sc-domain:example.com',
+      { startDate: '2026-07-01', endDate: '2026-07-31', dimensions: ['query'] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 1 },
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('rows を返す', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({

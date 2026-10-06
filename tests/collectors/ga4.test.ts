@@ -536,6 +536,25 @@ function requestBodyOf(fetchImpl: ReturnType<typeof vi.fn>, call: number) {
 }
 
 describe('runReportAll', () => {
+  it('options.retries により 2 ページ目の 5xx を再試行して全行がそろう', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(ga4Page(0, 2, 3))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'backend error' } }, 500))
+      .mockResolvedValueOnce(ga4Page(2, 3, 3));
+
+    const report = await runReportAll(
+      auth,
+      '123',
+      { dateRanges: [dateRange] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 1 },
+    );
+
+    expect(report.rows.map((r) => r.dimensions[0])).toEqual(['/p-0/', '/p-1/', '/p-2/']);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(requestBodyOf(fetchImpl, 2)).toMatchObject({ offset: 2 });
+  });
+
   it('rowCount に達するまで offset を進めて全行をまとめる', async () => {
     const fetchImpl = vi
       .fn()

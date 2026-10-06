@@ -70,6 +70,7 @@ export async function querySearchAnalytics(
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(request),
     },
+    options,
   );
 
   const rows = body.rows ?? [];

@@ -15,11 +15,12 @@ GA4・Search Console・PageSpeed Insights からサイト分析データを取�
 
 | モジュール | 役割 |
 | --- | --- |
-| `src/types.ts` | 共通の型（`DateRange` / `HttpOptions` / `TokenProvider`）と `ApiError` |
-| `src/auth/service-account.ts` | サービスアカウント JSON / base64 からトークンプロバイダを作る（JWT 署名・スコープ別キャッシュ） |
+| `src/types.ts` | 共通の型（`DateRange` / `HttpOptions` / `TokenProvider`）と `ApiError`。`HttpOptions` は `fetchImpl` と、5xx のみ再試行する `retries` / `retryDelayMs` を持つ |
+| `src/http.ts` | 共通の `fetchJson`。非 JSON 応答も `ApiError` にし、`HttpOptions.retries` / `retryDelayMs` で 5xx のみ再試行する（4xx・ネットワーク例外は再試行しない。ページングはページ単位） |
+| `src/auth/service-account.ts` | サービスアカウント JSON / base64 からトークンプロバイダを作る（JWT 署名・スコープ別キャッシュ）。トークン取得も `HttpOptions` の再試行に従う |
 | `src/collectors/ga4.ts` | GA4 Data API の `runReport` ラッパ・イベント件数・パラメータ分解取得。`runReportAll` は `offset` で全ページ取得し、`fetchParameterBreakdown` は常に全件を取る |
 | `src/collectors/search-console.ts` | Search Console API の `searchAnalytics.query` ラッパ。`{ rows, truncated }` を返し、`rowLimit`（未指定なら既定 1,000）による切り詰めの疑いを呼び出し側に伝える。`querySearchAnalyticsAll` は `startRow` で全ページ取得する |
-| `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得。`retries` / `retryDelayMs` で 5xx のみ再試行できる |
+| `src/collectors/pagespeed.ts` | PageSpeed Insights API で Core Web Vitals 取得。`params` は `{ strategy, apiKey? }` のみで、再試行は他と同じ `HttpOptions`（0.4.0 で `params.retries` / `params.retryDelayMs` を削除） |
 
 ---
 
@@ -56,7 +57,7 @@ GA プロパティ ID・サイト URL・イベント名・パラメータ名等�
 | 項目 | 採用技術 |
 | --- | --- |
 | 言語 | TypeScript 6.0+ |
-| ランタイム | Node.js 20+ (ESM) |
+| ランタイム | Node.js 20+ (ESM)（パッケージ利用者向け。開発と CI は Node 22 が必要: vitest 5 / lint-staged 17） |
 | 外部 API | GA4 Data API / Search Console API / PageSpeed Insights API |
 | 外部依存 | なし（`node:crypto` + `fetch` のみで認証・API 呼び出しを完結させる） |
 | テスト | Vitest（外部 API はすべてモック） |

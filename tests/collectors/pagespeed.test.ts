@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fetchPageSpeed } from '../../src/collectors/pagespeed.js';
 import { ApiError } from '../../src/types.js';
 
@@ -118,11 +118,7 @@ describe('fetchPageSpeed', () => {
       status: 500,
     });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('retries 指定時は 5xx を再試行し、成功した応答を返す', async () => {
+  it('options.retries 指定時は 5xx を再試行し、成功した応答を返す', async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(serverError())
@@ -130,41 +126,28 @@ describe('fetchPageSpeed', () => {
 
     const vitals = await fetchPageSpeed(
       'https://example.com/',
-      { strategy: 'mobile', retries: 2 },
-      { fetchImpl: fetchImpl as unknown as typeof fetch },
+      { strategy: 'mobile' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 1 },
     );
 
     expect(vitals.performanceScore).toBe(82);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it('retries 回を使い切ったら最後の ApiError を投げる', async () => {
+  it('options.retries: 1 でも 5xx が続けば合計 2 回で ApiError（再試行が二重にならない）', async () => {
     const fetchImpl = vi.fn(async () => serverError());
 
     await expect(
       fetchPageSpeed(
         'https://example.com/',
-        { strategy: 'mobile', retries: 2 },
-        { fetchImpl: fetchImpl as unknown as typeof fetch },
+        { strategy: 'mobile' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 1 },
       ),
     ).rejects.toThrow(ApiError);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it('ネットワーク例外は retries 指定でも再試行しない', async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
-
-    await expect(
-      fetchPageSpeed(
-        'https://example.com/',
-        { strategy: 'mobile', retries: 2 },
-        { fetchImpl: fetchImpl as unknown as typeof fetch },
-      ),
-    ).rejects.toThrow(TypeError);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it('retries 未指定なら再試行しない（従来どおり）', async () => {
+  it('options.retries 未指定なら再試行しない', async () => {
     const fetchImpl = vi.fn(async () => serverError());
 
     await expect(
@@ -175,61 +158,5 @@ describe('fetchPageSpeed', () => {
       ),
     ).rejects.toThrow(ApiError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it('4xx は再試行しない（キー誤り・クォータ超過は繰り返しても直らない）', async () => {
-    const fetchImpl = vi.fn(
-      async () => new Response(JSON.stringify({ error: { message: 'bad key' } }), { status: 400 }),
-    );
-
-    await expect(
-      fetchPageSpeed(
-        'https://example.com/',
-        { strategy: 'mobile', retries: 2 },
-        { fetchImpl: fetchImpl as unknown as typeof fetch },
-      ),
-    ).rejects.toThrow(ApiError);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it('retryDelayMs だけ待ってから再試行する', async () => {
-    vi.useFakeTimers();
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(serverError())
-      .mockResolvedValueOnce(lighthouseResponse());
-
-    const pending = fetchPageSpeed(
-      'https://example.com/',
-      { strategy: 'mobile', retries: 1, retryDelayMs: 10_000 },
-      { fetchImpl: fetchImpl as unknown as typeof fetch },
-    );
-    // 実装前（RED）は即座に reject されるので、未処理の reject として二重に報告されないよう受けておく
-    pending.catch(() => {});
-
-    await vi.advanceTimersByTimeAsync(9_999);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(pending).resolves.toMatchObject({ performanceScore: 82 });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    { retries: -1 },
-    { retries: 1.5 },
-    { retries: Number.NaN },
-    { retryDelayMs: -1 },
-    { retryDelayMs: Number.NaN },
-  ])('%o は RangeError（NaN で無限に再試行しない）', async (invalid) => {
-    const fetchImpl = vi.fn();
-
-    await expect(
-      fetchPageSpeed(
-        'https://example.com/',
-        { strategy: 'mobile', ...invalid },
-        { fetchImpl: fetchImpl as unknown as typeof fetch },
-      ),
-    ).rejects.toThrow(RangeError);
-    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
