@@ -321,8 +321,9 @@ export interface GroupedCountsParams {
   keys: readonly string[];
   /**
    * キーごとのラベルにする GA4 ディメンション名。キーごとに、**先頭の期間で、第 1 メトリック
-   * （`splitBy` 指定時は全列の合計）の件数が最も多い値**を採る。先頭の期間に値が無ければ次の期間を見る。
+   * （`splitBy` 指定時は列で分けない値）の件数が最も多い値**を採る。先頭の期間に値が無ければ次の期間を見る。
    * `(not set)` / `(other)` は採らない。同数なら文字列として小さいほう。
+   * 件数とは別の問い合わせでラベルを取るので、指定すると GA4 への問い合わせが 1 本増える。
    */
   label?: string;
   /** 数える GA4 メトリック名（1 つ以上・重複不可）。値は非負整数であること（件数専用）。 */
@@ -362,6 +363,9 @@ export interface GroupedCounts {
    * - `otherUnattributed`: `(other)` の行のうち、期間か列が `(other)` で振り分けられない分。
    *   **メトリック名ごと**に合計する（`splitBy` 指定時はその 1 つのメトリック）
    * `(other)` と `(not set)` の両方に当たる行は `other` に数える。
+   *
+   * どれも複数の行を足した値なので、ユーザー数のような加算できないメトリックでは実際の値より
+   * 大きく出うる（上限の目安として読む）。`rows` の件数は行を足さずに取るので、この影響は無い。
    */
   excluded: {
     notSet: CountsByPeriod;
@@ -371,11 +375,15 @@ export interface GroupedCounts {
   /**
    * GA4 の応答に付いた注意。`dataLossFromOtherRow` が true なら、`(other)` 行にまとめられた分だけ
    * キー別の数字が欠けている（期間を短くするなどして問い合わせを分ける）。
+   * `label` 指定時は、ラベルを決める問い合わせの注意も OR で合わせる。
    */
   metadata: Ga4ReportMetadata;
-  /** GA4 が返した総行数（最初のページの値）。 */
+  /** 件数の問い合わせで GA4 が返した総行数（最初のページの値）。 */
   rowCount: number;
-  /** ページングの途中で空ページが返り打ち切った（`rows` と `excluded` が不完全）。 */
+  /**
+   * ページングの途中で空ページが返り打ち切った（`rows` と `excluded` が不完全）。
+   * `label` 指定時は、ラベルを決める問い合わせが打ち切られた（`label` が欠けうる）ときも true。
+   */
   truncated: boolean;
 }
 
@@ -452,8 +460,11 @@ function emptyCounts(periods: readonly string[], columns: readonly string[]): Co
  * 率（CTR など）や閾値の判断は呼び出し側で行う。
  *
  * 自分で書くと間違えやすい次の処理をこの関数に閉じ込めている。
- * - キーが `(not set)` / `(other)` の行を `rows` から外し、`excluded` に数える
- * - 同じキーにラベルが複数あるとき、先頭の期間で件数の多い値を採る
+ * - キーが `(not set)` の行と、キー・`splitBy` の値・期間のどれかが `(other)` の行を `rows` から外し、
+ *   `excluded` に数える（両方に当たる行は `(other)` 側）
+ * - 同じキーにラベルが複数あるとき、先頭の期間で件数の多い値を採る。件数はラベルを含めない
+ *   問い合わせで取り、ラベルは別の問い合わせ（重みは `metrics` の先頭）で決める。ラベルで
+ *   分けた行を足すと、ユーザー数のような加算できないメトリックが水増しされるため
  * - 複数期間の応答から GA4 が自動で足す `dateRange` 列を列名で探し、期間ごとに分ける
  * - 返らなかった期間・列を 0 で埋める
  * - 全件をページングで取り、打ち切りを `truncated`、`(other)` による欠損を `metadata` で知らせる
@@ -470,32 +481,44 @@ export async function fetchGroupedCounts(
   validateGroupedCountsParams(params);
   const { dateRanges, keys, label, metrics, splitBy, filter } = params;
   const periods = dateRanges.map((range) => range.name);
-  const dimensionNames = [
-    ...keys,
-    ...(label !== undefined ? [label] : []),
-    ...(splitBy !== undefined ? [splitBy] : []),
-  ];
-
-  const request: RunReportAllRequest = {
-    dateRanges: dateRanges.map(({ startDate, endDate, name }) => ({ startDate, endDate, name })),
-    dimensions: dimensionNames.map((name) => ({ name })),
-    metrics: metrics.map((name) => ({ name })),
-  };
-  if (filter) {
-    // GA4 の inListFilter は既定で大文字小文字を区別しない。イベント名などは区別されるため、
-    // 指定と違う綴りの値が混ざって列が割れないよう、区別させる。
-    request.dimensionFilter = {
-      filter: {
-        fieldName: filter.dimension,
-        inListFilter: { values: [...filter.values], caseSensitive: true },
-      },
+  const buildRequest = (
+    dimensions: readonly string[],
+    metricNames: readonly string[],
+  ): RunReportAllRequest => {
+    const request: RunReportAllRequest = {
+      dateRanges: dateRanges.map(({ startDate, endDate, name }) => ({ startDate, endDate, name })),
+      dimensions: dimensions.map((name) => ({ name })),
+      metrics: metricNames.map((name) => ({ name })),
     };
-  }
+    if (filter) {
+      // GA4 の inListFilter は既定で大文字小文字を区別しない。イベント名などは区別されるため、
+      // 指定と違う綴りの値が混ざって列が割れないよう、区別させる。
+      request.dimensionFilter = {
+        filter: {
+          fieldName: filter.dimension,
+          inListFilter: { values: [...filter.values], caseSensitive: true },
+        },
+      };
+    }
+    return request;
+  };
 
-  const report = await runReportAll(auth, propertyId, request, options);
+  // 件数はラベルを含めずに取る。ラベルで分けた行を足すと、ユーザー数のような加算できない
+  // メトリックが水増しされる。ラベルは別の問い合わせで、先頭のメトリックを重みにして決める。
+  const [report, labelReport] = await Promise.all([
+    runReportAll(
+      auth,
+      propertyId,
+      buildRequest([...keys, ...(splitBy !== undefined ? [splitBy] : [])], metrics),
+      options,
+    ),
+    label !== undefined
+      ? runReportAll(auth, propertyId, buildRequest([...keys, label], [metrics[0]]), options)
+      : null,
+  ]);
 
-  const indexOf = (name: string): number => {
-    const index = report.dimensionHeaders.indexOf(name);
+  const indexOf = (target: Ga4Report, name: string): number => {
+    const index = target.dimensionHeaders.indexOf(name);
     if (index === -1) {
       throw new ApiError(
         'ga4',
@@ -505,10 +528,9 @@ export async function fetchGroupedCounts(
     }
     return index;
   };
-  const keyIndexes = keys.map(indexOf);
-  const labelIndex = label !== undefined ? indexOf(label) : -1;
-  const splitIndex = splitBy !== undefined ? indexOf(splitBy) : -1;
-  const periodIndex = periods.length > 1 ? indexOf(DATE_RANGE_DIMENSION) : -1;
+  const keyIndexes = keys.map((name) => indexOf(report, name));
+  const splitIndex = splitBy !== undefined ? indexOf(report, splitBy) : -1;
+  const periodIndex = periods.length > 1 ? indexOf(report, DATE_RANGE_DIMENSION) : -1;
   const periodSet = new Set(periods);
 
   // 1 周目: 行を読み、列を確定させる。(other) 行は列を増やさない。
@@ -539,15 +561,7 @@ export async function fetchGroupedCounts(
         ? [[splitValue, values[0], metrics[0]]]
         : metrics.map((metric, i) => [metric, values[i], metric]);
     if (!isOther) for (const [column] of cells) columnSet.add(column);
-    return {
-      period: rawPeriod,
-      keyValues,
-      labelValue: labelIndex === -1 ? null : (row.dimensions[labelIndex] ?? NOT_SET),
-      weight: values[0],
-      cells,
-      isNotSet,
-      isOther,
-    };
+    return { period: rawPeriod, keyValues, cells, isNotSet, isOther };
   });
   const columns = [...columnSet];
 
@@ -560,10 +574,7 @@ export async function fetchGroupedCounts(
       number
     >,
   };
-  const groups = new Map<
-    string,
-    { keys: string[]; counts: CountsByPeriod; labelWeights: Map<string, Map<string, number>> }
-  >();
+  const groups = new Map<string, { keys: string[]; counts: CountsByPeriod }>();
   for (const row of parsed) {
     if (row.isOther) {
       for (const [column, value, metric] of row.cells) {
@@ -582,23 +593,47 @@ export async function fetchGroupedCounts(
     const id = JSON.stringify(row.keyValues);
     let group = groups.get(id);
     if (!group) {
-      group = {
-        keys: row.keyValues,
-        counts: emptyCounts(periods, columns),
-        labelWeights: new Map(),
-      };
+      group = { keys: row.keyValues, counts: emptyCounts(periods, columns) };
       groups.set(id, group);
     }
     for (const [column, value] of row.cells) group.counts[row.period][column] += value;
-    if (row.labelValue !== null && row.labelValue !== NOT_SET && row.labelValue !== OTHER) {
-      const byLabel = group.labelWeights.get(row.period) ?? new Map<string, number>();
-      byLabel.set(row.labelValue, (byLabel.get(row.labelValue) ?? 0) + row.weight);
-      group.labelWeights.set(row.period, byLabel);
+  }
+
+  // ラベルの重み: キー → 期間 → ラベル → 件数。キー・ラベル・期間が (not set) / (other) の行や
+  // 未知の期間の行はラベル選びに使わない（件数には影響しないので throw しない）。
+  const labelWeights = new Map<string, Map<string, Map<string, number>>>();
+  if (labelReport !== null && label !== undefined) {
+    const labelKeyIndexes = keys.map((name) => indexOf(labelReport, name));
+    const labelIndex = indexOf(labelReport, label);
+    const labelPeriodIndex = periods.length > 1 ? indexOf(labelReport, DATE_RANGE_DIMENSION) : -1;
+    for (const row of labelReport.rows) {
+      const keyValues = labelKeyIndexes.map((i) => row.dimensions[i] ?? NOT_SET);
+      const labelValue = row.dimensions[labelIndex] ?? NOT_SET;
+      const period = labelPeriodIndex === -1 ? periods[0] : row.dimensions[labelPeriodIndex];
+      if (
+        keyValues.includes(NOT_SET) ||
+        keyValues.includes(OTHER) ||
+        labelValue === NOT_SET ||
+        labelValue === OTHER ||
+        !periodSet.has(period)
+      ) {
+        continue;
+      }
+      const weight = parseMetricCount(row.metrics[0], `fetchGroupedCounts: metric=${metrics[0]}`);
+      const id = JSON.stringify(keyValues);
+      const byPeriod = labelWeights.get(id) ?? new Map<string, Map<string, number>>();
+      const byLabel = byPeriod.get(period) ?? new Map<string, number>();
+      byLabel.set(labelValue, (byLabel.get(labelValue) ?? 0) + weight);
+      byPeriod.set(period, byLabel);
+      labelWeights.set(id, byPeriod);
     }
   }
 
   // 先頭の期間から順に見て、値のある最初の期間で件数の多いラベルを採る。
-  const pickLabel = (weightsByPeriod: Map<string, Map<string, number>>): string | null => {
+  const pickLabel = (
+    weightsByPeriod: Map<string, Map<string, number>> | undefined,
+  ): string | null => {
+    if (!weightsByPeriod) return null;
     for (const period of periods) {
       const weights = weightsByPeriod.get(period);
       if (!weights || weights.size === 0) continue;
@@ -618,7 +653,7 @@ export async function fetchGroupedCounts(
   const rows = [...groups.values()]
     .map((group) => ({
       keys: group.keys,
-      label: pickLabel(group.labelWeights),
+      label: pickLabel(labelWeights.get(JSON.stringify(group.keys))),
       counts: group.counts,
     }))
     .sort((a, b) => {
@@ -633,8 +668,18 @@ export async function fetchGroupedCounts(
     columns,
     rows,
     excluded,
-    metadata: report.metadata,
+    // ラベルの問い合わせに付いた注意・打ち切りも、返す結果（label）に掛かるので合わせて知らせる。
+    metadata: {
+      dataLossFromOtherRow:
+        report.metadata.dataLossFromOtherRow || labelReport?.metadata.dataLossFromOtherRow === true,
+      subjectToThresholding:
+        report.metadata.subjectToThresholding ||
+        labelReport?.metadata.subjectToThresholding === true,
+      sampled: report.metadata.sampled || labelReport?.metadata.sampled === true,
+    },
     rowCount: report.rowCount,
-    truncated: report.rows.length < report.rowCount,
+    truncated:
+      report.rows.length < report.rowCount ||
+      (labelReport !== null && labelReport.rows.length < labelReport.rowCount),
   };
 }

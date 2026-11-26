@@ -48,6 +48,57 @@ function requestBodyOf(fetchImpl: ReturnType<typeof mockFetch>, call = 0) {
   return JSON.parse(String(fetchImpl.mock.calls[call][1]?.body));
 }
 
+interface Ga4RequestBody {
+  dimensions: { name: string }[];
+  metrics: { name: string }[];
+  offset?: number;
+}
+
+/** 要求の中身を見て応答を返す（件数とラベルの 2 本の問い合わせを見分けるため）。 */
+function routeFetch(handler: (request: Ga4RequestBody) => unknown) {
+  return vi.fn(async (_url: string, init?: RequestInit) =>
+    jsonResponse(handler(JSON.parse(String(init?.body)) as Ga4RequestBody)),
+  );
+}
+
+/** 要求したディメンションの名前（順序どおり）。 */
+function dimensionsOf(request: Ga4RequestBody): string[] {
+  return request.dimensions.map((d) => d.name);
+}
+
+/**
+ * GA4 の代わり。全ディメンションを持つ応答 `full` を、要求されたディメンション（`full` に
+ * `dateRange` があればそれも）とメトリックに絞り、同じ値の行を足して返す。足せるメトリック
+ * （件数）専用。要求したディメンションが `full` に無ければ `full` をそのまま返す。
+ */
+function fakeGa4(full: ReturnType<typeof ga4Body> & { metadata?: unknown }) {
+  const headers = full.dimensionHeaders.map((h) => h.name);
+  const metricNames = full.metricHeaders.map((h) => h.name);
+  return routeFetch((request) => {
+    const wanted = dimensionsOf(request);
+    if (!wanted.every((name) => headers.includes(name))) return full;
+    const keep = headers.filter((name) => wanted.includes(name) || name === 'dateRange');
+    const metricIndexes = request.metrics.map((m) => metricNames.indexOf(m.name));
+    const merged = new Map<string, [string[], number[]]>();
+    for (const row of full.rows) {
+      const dims = keep.map((name) => row.dimensionValues[headers.indexOf(name)].value);
+      const values = metricIndexes.map((i) => Number(row.metricValues[i].value));
+      const id = JSON.stringify(dims);
+      const existing = merged.get(id);
+      if (existing) existing[1] = existing[1].map((v, i) => v + values[i]);
+      else merged.set(id, [dims, values]);
+    }
+    return {
+      ...ga4Body(
+        keep,
+        request.metrics.map((m) => m.name),
+        [...merged.values()].map(([dims, values]) => [dims, values.map(String)]),
+      ),
+      ...(full.metadata !== undefined ? { metadata: full.metadata } : {}),
+    };
+  });
+}
+
 const viewAndClick: GroupedCountsParams = {
   dateRanges: [thisMonth],
   keys: [eventParam('item_id')],
@@ -65,8 +116,8 @@ describe('eventParam / itemParam', () => {
 });
 
 describe('fetchGroupedCounts', () => {
-  it('キー・ラベル・列のディメンションと絞り込みを 1 本の問い合わせで送る', async () => {
-    const fetchImpl = mockFetch(
+  it('件数はラベル抜きで、ラベルは先頭メトリックだけの別の問い合わせで、同じ絞り込みで送る', async () => {
+    const fetchImpl = fakeGa4(
       ga4Body(['customEvent:item_id', 'customEvent:item_title', 'eventName'], ['eventCount'], []),
     );
 
@@ -74,26 +125,129 @@ describe('fetchGroupedCounts', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const body = requestBodyOf(fetchImpl);
-    expect(body.dateRanges).toEqual([thisMonth]);
-    expect(body.dimensions).toEqual([
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const bodies = [requestBodyOf(fetchImpl, 0), requestBodyOf(fetchImpl, 1)];
+    const counts = bodies.find((body) => dimensionsOf(body).includes('eventName'));
+    const labels = bodies.find((body) => dimensionsOf(body).includes('customEvent:item_title'));
+    expect(counts.dimensions).toEqual([{ name: 'customEvent:item_id' }, { name: 'eventName' }]);
+    expect(counts.metrics).toEqual([{ name: 'eventCount' }]);
+    expect(labels.dimensions).toEqual([
       { name: 'customEvent:item_id' },
       { name: 'customEvent:item_title' },
-      { name: 'eventName' },
     ]);
-    expect(body.metrics).toEqual([{ name: 'eventCount' }]);
-    expect(body.dimensionFilter).toEqual({
-      filter: {
-        fieldName: 'eventName',
-        // GA4 の既定は大文字小文字を区別しない。綴りの違う値で列が割れないよう区別させる。
-        inListFilter: { values: ['sample_view', 'sample_click'], caseSensitive: true },
-      },
+    expect(labels.metrics).toEqual([{ name: 'eventCount' }]);
+    for (const body of bodies) {
+      expect(body.dateRanges).toEqual([thisMonth]);
+      expect(body.dimensionFilter).toEqual({
+        filter: {
+          fieldName: 'eventName',
+          // GA4 の既定は大文字小文字を区別しない。綴りの違う値で列が割れないよう区別させる。
+          inListFilter: { values: ['sample_view', 'sample_click'], caseSensitive: true },
+        },
+      });
+    }
+  });
+
+  it('label を指定しなければ問い合わせは 1 本', async () => {
+    const fetchImpl = mockFetch(ga4Body(['customEvent:item_id', 'eventName'], ['eventCount'], []));
+
+    await fetchGroupedCounts(
+      auth,
+      '123',
+      { ...viewAndClick, label: undefined },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('加算できないメトリックをラベルで分けて足さない（件数はラベル抜きの値をそのまま使う）', async () => {
+    // 同じページに 2 つのタイトルが付いていると、タイトル別のユーザー数（7 と 6）を足した 13 は
+    // 実際のユーザー数（10）より大きい。件数はラベルを含めない問い合わせの値を使う。
+    const fetchImpl = routeFetch((request) =>
+      dimensionsOf(request).includes('pageTitle')
+        ? ga4Body(
+            ['pagePath', 'pageTitle'],
+            ['totalUsers'],
+            [
+              [['/a/', 'Title A'], ['7']],
+              [['/a/', 'Title B'], ['6']],
+            ],
+          )
+        : ga4Body(['pagePath'], ['totalUsers'], [[['/a/'], ['10']]]),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { dateRanges: [thisMonth], keys: ['pagePath'], label: 'pageTitle', metrics: ['totalUsers'] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.rows).toEqual([
+      { keys: ['/a/'], label: 'Title A', counts: { current: { totalUsers: 10 } } },
+    ]);
+  });
+
+  it('ラベルの問い合わせの打ち切りと metadata も結果に反映する', async () => {
+    const fetchImpl = routeFetch((request) => {
+      if (!dimensionsOf(request).includes('pageTitle')) {
+        return ga4Body(['pagePath'], ['totalUsers'], [[['/a/'], ['10']]]);
+      }
+      // 最初のページだけ 1 行返し、続きは空ページ（打ち切り）。
+      if ((request.offset ?? 0) > 0) return ga4Body(['pagePath', 'pageTitle'], ['totalUsers'], []);
+      return {
+        ...ga4Body(['pagePath', 'pageTitle'], ['totalUsers'], [[['/a/', 'Title A'], ['7']]], 5),
+        metadata: { dataLossFromOtherRow: true },
+      };
     });
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { dateRanges: [thisMonth], keys: ['pagePath'], label: 'pageTitle', metrics: ['totalUsers'] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.rowCount).toBe(1);
+    expect(result.metadata.dataLossFromOtherRow).toBe(true);
+  });
+
+  it('ラベルの問い合わせで期間や値が (other) / (not set) の行はラベル選びに使わない', async () => {
+    const fetchImpl = routeFetch((request) =>
+      dimensionsOf(request).includes('pageTitle')
+        ? ga4Body(
+            ['pagePath', 'pageTitle', 'dateRange'],
+            ['totalUsers'],
+            [
+              [['/a/', 'Other Period', OTHER], ['99']],
+              [['/a/', OTHER, 'current'], ['98']],
+              [['/a/', 'Kept', 'current'], ['1']],
+              [[OTHER, 'Other Key', 'current'], ['97']],
+              [[NOT_SET, 'Not Set Key', 'current'], ['96']],
+            ],
+          )
+        : ga4Body(['pagePath', 'dateRange'], ['totalUsers'], [[['/a/', 'current'], ['10']]]),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      {
+        dateRanges: [thisMonth, lastMonth],
+        keys: ['pagePath'],
+        label: 'pageTitle',
+        metrics: ['totalUsers'],
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.rows.map((row) => [row.keys[0], row.label])).toEqual([['/a/', 'Kept']]);
   });
 
   it('キーごとに列へ分けて足し合わせ、返らなかった列は 0 で埋める', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName'],
         ['eventCount'],
@@ -119,7 +273,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('同じキーに複数のラベルがあれば件数の多いほうを採り、(not set) は採らない', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName'],
         ['eventCount'],
@@ -148,7 +302,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('キーが (not set) / (other) の行は rows から外して excluded に数える', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName'],
         ['eventCount'],
@@ -171,7 +325,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('(other) 行は列を増やさず、期間や列が (other) で分からない分は otherUnattributed に数える', async () => {
-    const fetchImpl = mockFetch({
+    const fetchImpl = fakeGa4({
       ...ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName', 'dateRange'],
         ['eventCount'],
@@ -297,7 +451,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('ラベルは先頭の期間で件数の多い値を採り、先頭の期間に無ければ次の期間を見る', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName', 'dateRange'],
         ['eventCount'],
@@ -323,8 +477,8 @@ describe('fetchGroupedCounts', () => {
     ]);
   });
 
-  it('splitBy の各列の件数をラベルの重みに足す', async () => {
-    const fetchImpl = mockFetch(
+  it('ラベルの重みは splitBy で分けない値（列をまたいだ件数）', async () => {
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName'],
         ['eventCount'],
@@ -343,7 +497,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('応答にキーやラベルのディメンションが無ければ ApiError', async () => {
-    const fetchImpl = mockFetch(ga4Body(['eventName'], ['eventCount'], [[['sample_view'], ['1']]]));
+    const fetchImpl = fakeGa4(ga4Body(['eventName'], ['eventCount'], [[['sample_view'], ['1']]]));
 
     await expect(
       fetchGroupedCounts(auth, '123', viewAndClick, {
@@ -403,7 +557,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('複数の期間は dateRange 列で見分け、片方の期間に無いキーは 0 で埋める', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['customEvent:item_id', 'customEvent:item_title', 'eventName', 'dateRange'],
         ['eventCount'],
@@ -493,7 +647,7 @@ describe('fetchGroupedCounts', () => {
   });
 
   it('splitBy 無しならメトリックごとに列を作る（アイテムスコープの例）', async () => {
-    const fetchImpl = mockFetch(
+    const fetchImpl = fakeGa4(
       ga4Body(
         ['itemId', 'itemName'],
         ['itemsViewed', 'itemsClickedInList'],
@@ -522,7 +676,10 @@ describe('fetchGroupedCounts', () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
 
-    const body = requestBodyOf(fetchImpl);
+    // 件数の問い合わせ（ラベルを含まないほう）を探す。2 本は並行に送るので順番に頼らない。
+    const body = [requestBodyOf(fetchImpl, 0), requestBodyOf(fetchImpl, 1)].find(
+      (candidate) => !dimensionsOf(candidate).includes('itemName'),
+    );
     expect(body.metrics).toEqual([{ name: 'itemsViewed' }, { name: 'itemsClickedInList' }]);
     expect(body.dimensionFilter).toBeUndefined();
     expect(result.columns).toEqual(['itemsViewed', 'itemsClickedInList']);
