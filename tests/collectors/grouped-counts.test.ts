@@ -198,8 +198,77 @@ describe('fetchGroupedCounts', () => {
       current: { sample_view: 0, sample_click: 0 },
       previous: { sample_view: 3, sample_click: 0 },
     });
-    expect(result.excluded.otherUnattributed).toBe(9);
+    expect(result.excluded.otherUnattributed).toEqual({ eventCount: 9 });
     expect(result.metadata.dataLossFromOtherRow).toBe(true);
+  });
+
+  it('キーが (not set) でも、列や期間が (other) の行は (other) として扱い、列を増やさず throw しない', async () => {
+    const fetchImpl = mockFetch(
+      ga4Body(
+        ['customEvent:item_id', 'eventName', 'dateRange'],
+        ['eventCount'],
+        [
+          [['A1', 'sample_view', 'current'], ['5']],
+          [[NOT_SET, OTHER, 'current'], ['2']],
+          [[NOT_SET, 'sample_view', OTHER], ['4']],
+          [[NOT_SET, 'sample_click', 'previous'], ['1']],
+        ],
+      ),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { ...viewAndClick, label: undefined, dateRanges: [thisMonth, lastMonth] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.columns).toEqual(['sample_view', 'sample_click']);
+    expect(result.excluded.notSet).toEqual({
+      current: { sample_view: 0, sample_click: 0 },
+      previous: { sample_view: 0, sample_click: 1 },
+    });
+    expect(result.excluded.otherUnattributed).toEqual({ eventCount: 6 });
+  });
+
+  it('splitBy 無しでは otherUnattributed をメトリックごとに分ける', async () => {
+    const fetchImpl = mockFetch(
+      ga4Body(
+        ['itemId', 'dateRange'],
+        ['itemsViewed', 'itemsClickedInList'],
+        [
+          [
+            ['SKU-1', 'current'],
+            ['50', '4'],
+          ],
+          [
+            [OTHER, OTHER],
+            ['1000', '30'],
+          ],
+          [
+            [OTHER, 'previous'],
+            ['7', '1'],
+          ],
+        ],
+      ),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      {
+        dateRanges: [thisMonth, lastMonth],
+        keys: ['itemId'],
+        metrics: ['itemsViewed', 'itemsClickedInList'],
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.excluded.otherUnattributed).toEqual({
+      itemsViewed: 1000,
+      itemsClickedInList: 30,
+    });
+    expect(result.excluded.other.previous).toEqual({ itemsViewed: 7, itemsClickedInList: 1 });
   });
 
   it('複数期間でも excluded を期間ごとに分ける', async () => {

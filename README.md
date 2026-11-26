@@ -54,11 +54,11 @@ console.log(breakdown.notSetRate);
 | 関数 / 定数 | 役割 |
 | --- | --- |
 | `createServiceAccountAuth(raw, options?)` | サービスアカウント JSON / base64 からトークンプロバイダを作る（スコープ別にキャッシュ）。collector に渡す `options` はここには引き継がれないので、必要なら別途渡す。トークン取得も `options.retries` / `options.retryDelayMs` で 5xx を再試行できる |
-| `runReport(auth, propertyId, request, options?)` | GA4 Data API の `runReport` の薄いラッパ。0.5.0 から、応答の注意（`(other)` 行による欠損・しきい値処理・サンプリング）を `metadata` で返す（`runReportAll` はページをまたいで OR でまとめる） |
+| `runReport(auth, propertyId, request, options?)` | GA4 Data API の `runReport` の薄いラッパ。0.5.0 から、応答の注意（`(other)` 行による欠損・しきい値処理・サンプリング）を `metadata` で返す（`runReportAll` はページをまたいで OR でまとめる）。**`Ga4Report` 型の `metadata` は必須なので、テストなどで `Ga4Report` を型付きで組み立てている場合は `metadata` を足すこと** |
 | `runReportAll(auth, propertyId, request, options?)` | `runReport` を GA4 の `offset` で全ページ取得する（ページサイズ 250,000・総数は 1 ページ目の `rowCount`）。空ページが返ったらそこで打ち切るため、`rows.length < rowCount` になりうる。`limit` / `offset` は型で禁止（変数で組み立てるときは `RunReportAllRequest` で注釈する） |
 | `fetchEventCounts(auth, propertyId, params, options?)` | イベント名別の件数。指定したイベントが返らなければ 0 件として補完する。GA4 応答が `limit`（既定 200）で切り詰められていた場合は 0 件を捏造せず `ApiError` を throw する |
 | `fetchParameterBreakdown(auth, propertyId, params, options?)` | 指定イベントを指定パラメータで分解し `(not set)` の件数と率を返す。常に `runReportAll` で全件をページングして取る（`limit` は指定できない）。**0.3.0 で `limit` 引数を削除した（常に全件を取る）。`truncated` の意味も「limit による切り詰め」から「ページングの途中で空ページが返り打ち切った」に変わった。** `truncated` はページングが空ページで打ち切られたときだけ `true` になるので、`notSetRate` 等の分母が不完全でないか呼び出し側で確認すること |
-| `fetchGroupedCounts(auth, propertyId, params, options?)` | 指定したキー（GA4 ディメンション、1 つ以上）ごとに件数を数え、期間・列ごとに返す（0.5.0 で追加）。`dateRanges`（1〜4 個・名前付き）で前月比なども 1 回で取れる。`splitBy` でディメンションの値ごとに列を分ける（例: `eventName`）か、無指定ならメトリックごとに列を作る。キーが `(not set)` / `(other)` の行は `rows` から外して `excluded` に数え、ラベル（`label`）はキーごとに先頭の期間で件数の多い値を採る。返らなかった期間・列は 0 で埋める。率や閾値の判断は呼び出し側で行う。使い方は下の「キーごとの件数」 |
+| `fetchGroupedCounts(auth, propertyId, params, options?)` | 指定したキー（GA4 ディメンション、1 つ以上）ごとに件数を数え、期間・列ごとに返す（0.5.0 で追加）。`dateRanges`（1〜4 個・名前付き）で前月比なども 1 回で取れる。`splitBy` でディメンションの値ごとに列を分ける（例: `eventName`）か、無指定ならメトリックごとに列を作る。キーが `(not set)` の行と、キー・`splitBy` の値・期間のどれかが `(other)` の行は `rows` から外して `excluded` に数え、ラベル（`label`）はキーごとに先頭の期間で件数の多い値を採る。返らなかった期間・列は 0 で埋める。率や閾値の判断は呼び出し側で行う。使い方は下の「キーごとの件数」 |
 | `eventParam(name)` / `itemParam(name)` | イベントスコープ / アイテムスコープのカスタムディメンション名（`customEvent:<name>` / `customItem:<name>`）を組み立てる |
 | `NOT_SET` / `OTHER` / `MAX_DATE_RANGES` | GA4 が値の無いディメンションに返す `(not set)`、値の種類が多すぎるときにまとめる `(other)`、1 リクエストの日付範囲の上限（4） |
 | `querySearchAnalytics(auth, siteUrl, request, options?)` | Search Console の `searchAnalytics.query` の薄いラッパ。`{ rows, truncated }` を返す。`rows.length` が `rowLimit`（未指定なら既定 1,000）と一致すると `truncated: true` になる。`truncated: false` でも API 内部制限により全件取得は保証されないため、API が公開している範囲の全行が必要な場合は `querySearchAnalyticsAll` を使うこと（Search Console 側の内部制限で落ちた行は取り戻せない） |
@@ -98,7 +98,7 @@ for (const row of result.rows) {
 - **e コマースのアイテム**: `keys: ['itemId']`, `label: 'itemName'`, `metrics: ['itemsViewed', 'itemsClickedInList']` のように、`splitBy` を付けずにメトリックごとの列で取る
 - **組み合わせられないディメンションとメトリックがある。** 例えば `eventName` とアイテムスコープのディメンション（`itemId` など）は一緒に使えず、GA4 は `400` を返す（`ApiError` が throw される）
 - **件数専用。** メトリックの値は非負整数として読む（売上の合計や平均時間のような値は扱えない）
-- **`metadata.dataLossFromOtherRow` が true なら、アイテム別の数字が欠けている。** GA4 は値の種類が多すぎるディメンションの残りを `(other)` 行にまとめる。まとめられた件数は `excluded.other`（期間・列ごと）と `excluded.otherUnattributed`（期間や列まで `(other)` になって分けられない分）に入る。期間を短くするなどして問い合わせを分けること
+- **`metadata.dataLossFromOtherRow` が true なら、アイテム別の数字が欠けている。** GA4 は値の種類が多すぎるディメンションの残りを `(other)` 行にまとめる。まとめられた件数は `excluded.other`（期間・列ごと）と `excluded.otherUnattributed`（期間や列まで `(other)` になって分けられない分。メトリック名ごと）に入る。普通のキーでも `splitBy` の値が `(other)` の行はそのキーの件数から外れるので、`rows` の件数は少なめに出る。期間を短くするなどして問い合わせを分けること
 - **ラベルは先頭の期間を基準に選ぶ。** 名前が途中で変わったとき、今月（`dateRanges` の先頭）の名前が出るように、先頭の期間で件数の多い値を採る（`splitBy` 指定時は全列の合計、無指定時は第 1 メトリック）。先頭の期間に値が無いキーは次の期間を見る
 - **`filter` は大文字小文字まで一致させる。** GA4 の既定は区別しないが、イベント名などは区別されるため、この関数は区別して絞り込む
 - **`splitBy` は値の種類が少ないディメンションに使う。** 列の数だけ全キー・全期間のセルを作るため、`pagePath` のような値の多いディメンションを列にすると重くなる。値の多いものは `keys` に入れる

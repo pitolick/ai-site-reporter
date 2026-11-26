@@ -358,10 +358,16 @@ export interface GroupedCounts {
   /**
    * `rows` に入れなかった件数。
    * - `notSet`: キーのどれかが `(not set)` の行（期間・列ごと）
-   * - `other`: キーか `splitBy` の値が `(other)` の行（期間・列ごと）。期間や列が `(other)` で分からない分は `otherUnattributed` に数える
-   * 両方に当たる行は `notSet`。
+   * - `other`: キー・`splitBy` の値・期間のどれかが `(other)` の行（期間・列ごと）
+   * - `otherUnattributed`: `(other)` の行のうち、期間か列が `(other)` で振り分けられない分。
+   *   **メトリック名ごと**に合計する（`splitBy` 指定時はその 1 つのメトリック）
+   * `(other)` と `(not set)` の両方に当たる行は `other` に数える。
    */
-  excluded: { notSet: CountsByPeriod; other: CountsByPeriod; otherUnattributed: number };
+  excluded: {
+    notSet: CountsByPeriod;
+    other: CountsByPeriod;
+    otherUnattributed: Record<string, number>;
+  };
   /**
    * GA4 の応答に付いた注意。`dataLossFromOtherRow` が true なら、`(other)` 行にまとめられた分だけ
    * キー別の数字が欠けている（期間を短くするなどして問い合わせを分ける）。
@@ -516,8 +522,10 @@ export async function fetchGroupedCounts(
     const keyValues = keyIndexes.map((i) => row.dimensions[i] ?? NOT_SET);
     const splitValue = splitIndex === -1 ? null : (row.dimensions[splitIndex] ?? NOT_SET);
     const rawPeriod = periodIndex === -1 ? periods[0] : row.dimensions[periodIndex];
-    const isNotSet = keyValues.includes(NOT_SET);
-    const isOther = !isNotSet && (keyValues.includes(OTHER) || splitValue === OTHER);
+    // (other) はキー・列・期間のどれに出ても「まとめられて振り分けられない行」なので、
+    // (not set) より先に判定する（列を増やさず、期間の検査もしない）。
+    const isOther = keyValues.includes(OTHER) || splitValue === OTHER || rawPeriod === OTHER;
+    const isNotSet = !isOther && keyValues.includes(NOT_SET);
     if (!isOther && !periodSet.has(rawPeriod)) {
       throw new ApiError(
         'ga4',
@@ -525,10 +533,11 @@ export async function fetchGroupedCounts(
         `fetchGroupedCounts: 応答に未知の期間 ${rawPeriod} があります`,
       );
     }
-    const cells: [string, number][] =
+    // [列, 件数, メトリック名]
+    const cells: [string, number, string][] =
       splitValue !== null
-        ? [[splitValue, values[0]]]
-        : metrics.map((metric, i) => [metric, values[i]]);
+        ? [[splitValue, values[0], metrics[0]]]
+        : metrics.map((metric, i) => [metric, values[i], metric]);
     if (!isOther) for (const [column] of cells) columnSet.add(column);
     return {
       period: rawPeriod,
@@ -546,7 +555,10 @@ export async function fetchGroupedCounts(
   const excluded = {
     notSet: emptyCounts(periods, columns),
     other: emptyCounts(periods, columns),
-    otherUnattributed: 0,
+    otherUnattributed: Object.fromEntries(metrics.map((metric) => [metric, 0])) as Record<
+      string,
+      number
+    >,
   };
   const groups = new Map<
     string,
@@ -554,11 +566,11 @@ export async function fetchGroupedCounts(
   >();
   for (const row of parsed) {
     if (row.isOther) {
-      for (const [column, value] of row.cells) {
+      for (const [column, value, metric] of row.cells) {
         if (periodSet.has(row.period) && columnSet.has(column)) {
           excluded.other[row.period][column] += value;
         } else {
-          excluded.otherUnattributed += value;
+          excluded.otherUnattributed[metric] += value;
         }
       }
       continue;
