@@ -97,9 +97,18 @@ describe('公開 API', () => {
     expect(typeof api.fetchEventCounts).toBe('function');
     expect(typeof api.runReportAll).toBe('function');
     expect(typeof api.fetchParameterBreakdown).toBe('function');
+    expect(typeof api.fetchGroupedCounts).toBe('function');
+    expect(typeof api.eventParam).toBe('function');
+    expect(typeof api.itemParam).toBe('function');
     expect(typeof api.querySearchAnalytics).toBe('function');
     expect(typeof api.querySearchAnalyticsAll).toBe('function');
     expect(typeof api.fetchPageSpeed).toBe('function');
+  });
+
+  it('定数 NOT_SET / OTHER / MAX_DATE_RANGES を export している', () => {
+    expect(api.NOT_SET).toBe('(not set)');
+    expect(api.OTHER).toBe('(other)');
+    expect(api.MAX_DATE_RANGES).toBe(4);
   });
 
   it('定数 DEFAULT_ROW_LIMIT を export している', () => {
