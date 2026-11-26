@@ -17,6 +17,7 @@ export {
 } from './collectors/ga4.js';
 export type {
   Ga4Report,
+  Ga4ReportMetadata,
   Ga4Row,
   EventCount,
   ParameterBreakdown,

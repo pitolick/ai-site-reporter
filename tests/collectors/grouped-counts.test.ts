@@ -84,7 +84,11 @@ describe('fetchGroupedCounts', () => {
     ]);
     expect(body.metrics).toEqual([{ name: 'eventCount' }]);
     expect(body.dimensionFilter).toEqual({
-      filter: { fieldName: 'eventName', inListFilter: { values: ['sample_view', 'sample_click'] } },
+      filter: {
+        fieldName: 'eventName',
+        // GA4 の既定は大文字小文字を区別しない。綴りの違う値で列が割れないよう区別させる。
+        inListFilter: { values: ['sample_view', 'sample_click'], caseSensitive: true },
+      },
     });
   });
 
@@ -164,6 +168,169 @@ describe('fetchGroupedCounts', () => {
     expect(result.rows.map((row) => row.keys[0])).toEqual(['A1']);
     expect(result.excluded.notSet).toEqual({ current: { sample_view: 4, sample_click: 1 } });
     expect(result.excluded.other).toEqual({ current: { sample_view: 6, sample_click: 0 } });
+  });
+
+  it('(other) 行は列を増やさず、期間や列が (other) で分からない分は otherUnattributed に数える', async () => {
+    const fetchImpl = mockFetch({
+      ...ga4Body(
+        ['customEvent:item_id', 'customEvent:item_title', 'eventName', 'dateRange'],
+        ['eventCount'],
+        [
+          [['A1', 'Alpha', 'sample_view', 'current'], ['10']],
+          [[OTHER, OTHER, 'sample_view', 'previous'], ['3']],
+          [[OTHER, OTHER, OTHER, OTHER], ['7']],
+          [['B2', 'Beta', OTHER, 'current'], ['2']],
+        ],
+      ),
+      metadata: { dataLossFromOtherRow: true },
+    });
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { ...viewAndClick, dateRanges: [thisMonth, lastMonth] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.columns).toEqual(['sample_view', 'sample_click']);
+    expect(result.rows.map((row) => row.keys[0])).toEqual(['A1']);
+    expect(result.excluded.other).toEqual({
+      current: { sample_view: 0, sample_click: 0 },
+      previous: { sample_view: 3, sample_click: 0 },
+    });
+    expect(result.excluded.otherUnattributed).toBe(9);
+    expect(result.metadata.dataLossFromOtherRow).toBe(true);
+  });
+
+  it('複数期間でも excluded を期間ごとに分ける', async () => {
+    const fetchImpl = mockFetch(
+      ga4Body(
+        ['customEvent:item_id', 'eventName', 'dateRange'],
+        ['eventCount'],
+        [
+          [[NOT_SET, 'sample_view', 'current'], ['4']],
+          [[NOT_SET, 'sample_click', 'previous'], ['2']],
+        ],
+      ),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { ...viewAndClick, label: undefined, dateRanges: [thisMonth, lastMonth] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.excluded.notSet).toEqual({
+      current: { sample_view: 4, sample_click: 0 },
+      previous: { sample_view: 0, sample_click: 2 },
+    });
+  });
+
+  it('ラベルは先頭の期間で件数の多い値を採り、先頭の期間に無ければ次の期間を見る', async () => {
+    const fetchImpl = mockFetch(
+      ga4Body(
+        ['customEvent:item_id', 'customEvent:item_title', 'eventName', 'dateRange'],
+        ['eventCount'],
+        [
+          [['A1', 'Old Name', 'sample_view', 'previous'], ['1000']],
+          [['A1', 'New Name', 'sample_view', 'current'], ['10']],
+          [['B2', 'Only Before', 'sample_view', 'previous'], ['5']],
+          [['B2', NOT_SET, 'sample_view', 'current'], ['3']],
+        ],
+      ),
+    );
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      { ...viewAndClick, dateRanges: [thisMonth, lastMonth] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.rows.map((row) => [row.keys[0], row.label])).toEqual([
+      ['A1', 'New Name'],
+      ['B2', 'Only Before'],
+    ]);
+  });
+
+  it('splitBy の各列の件数をラベルの重みに足す', async () => {
+    const fetchImpl = mockFetch(
+      ga4Body(
+        ['customEvent:item_id', 'customEvent:item_title', 'eventName'],
+        ['eventCount'],
+        [
+          [['A1', 'Viewed Name', 'sample_view'], ['3']],
+          [['A1', 'Clicked Name', 'sample_click'], ['5']],
+        ],
+      ),
+    );
+
+    const result = await fetchGroupedCounts(auth, '123', viewAndClick, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result.rows[0].label).toBe('Clicked Name');
+  });
+
+  it('応答にキーやラベルのディメンションが無ければ ApiError', async () => {
+    const fetchImpl = mockFetch(ga4Body(['eventName'], ['eventCount'], [[['sample_view'], ['1']]]));
+
+    await expect(
+      fetchGroupedCounts(auth, '123', viewAndClick, {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow(/customEvent:item_id/);
+  });
+
+  it('応答の metadata を返す（無ければすべて false）', async () => {
+    const withMeta = mockFetch({
+      ...ga4Body(['customEvent:item_id', 'eventName'], ['eventCount'], []),
+      metadata: { subjectToThresholding: true, samplingMetadatas: [{ samplesReadCount: '1' }] },
+    });
+    const withoutMeta = mockFetch(
+      ga4Body(['customEvent:item_id', 'eventName'], ['eventCount'], []),
+    );
+    const params = { ...viewAndClick, label: undefined };
+
+    const a = await fetchGroupedCounts(auth, '123', params, {
+      fetchImpl: withMeta as unknown as typeof fetch,
+    });
+    const b = await fetchGroupedCounts(auth, '123', params, {
+      fetchImpl: withoutMeta as unknown as typeof fetch,
+    });
+
+    expect(a.metadata).toEqual({
+      dataLossFromOtherRow: false,
+      subjectToThresholding: true,
+      sampled: true,
+    });
+    expect(b.metadata).toEqual({
+      dataLossFromOtherRow: false,
+      subjectToThresholding: false,
+      sampled: false,
+    });
+  });
+
+  it('readonly な配列（as const）をそのまま渡せる', async () => {
+    const fetchImpl = mockFetch(ga4Body(['customEvent:item_id', 'eventName'], ['eventCount'], []));
+    const events = ['sample_view', 'sample_click'] as const;
+    const keys = [eventParam('item_id')] as const;
+
+    const result = await fetchGroupedCounts(
+      auth,
+      '123',
+      {
+        dateRanges: [thisMonth] as const,
+        keys,
+        metrics: ['eventCount'] as const,
+        splitBy: 'eventName',
+        filter: { dimension: 'eventName', values: events },
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(result.columns).toEqual(['sample_view', 'sample_click']);
   });
 
   it('複数の期間は dateRange 列で見分け、片方の期間に無いキーは 0 で埋める', async () => {
@@ -434,6 +601,17 @@ describe('fetchGroupedCounts', () => {
       ['ディメンションが重複', { label: eventParam('item_id') }, /重複/],
       ['dateRange をキーに指定', { keys: ['dateRange'] }, /dateRange/],
       ['filter.values が空', { filter: { dimension: 'eventName', values: [] } }, /filter/],
+      [
+        'filter.values が重複',
+        { filter: { dimension: 'eventName', values: ['a', 'a'] } },
+        /filter.values/,
+      ],
+      ['filter.dimension が空', { filter: { dimension: '', values: ['a'] } }, /filter.dimension/],
+      ['metrics が重複', { metrics: ['eventCount', 'eventCount'], splitBy: undefined }, /metrics/],
+      ['metrics の要素が空', { metrics: [''] }, /metrics/],
+      ['keys の要素が空', { keys: [''] }, /keys/],
+      ['label が空', { label: '' }, /label/],
+      ['splitBy が空', { splitBy: '' }, /splitBy/],
     ];
 
     it.each(cases)('%s', async (_title, override, message) => {

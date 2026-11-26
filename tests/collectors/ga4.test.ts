@@ -536,6 +536,37 @@ function requestBodyOf(fetchImpl: ReturnType<typeof vi.fn>, call: number) {
 }
 
 describe('runReportAll', () => {
+  it('どのページかに立った metadata の注意を OR でまとめて返す', async () => {
+    const page = (from: number, to: number, metadata: Record<string, unknown>) =>
+      jsonResponse({
+        dimensionHeaders: [{ name: 'pagePath' }],
+        metricHeaders: [{ name: 'eventCount' }],
+        rows: Array.from({ length: to - from }, (_, i) => ({
+          dimensionValues: [{ value: `/p-${from + i}/` }],
+          metricValues: [{ value: '1' }],
+        })),
+        rowCount: 3,
+        metadata,
+      });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(page(0, 2, { subjectToThresholding: true }))
+      .mockResolvedValueOnce(page(2, 3, { dataLossFromOtherRow: true }));
+
+    const report = await runReportAll(
+      auth,
+      '123',
+      { dateRanges: [dateRange] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(report.metadata).toEqual({
+      dataLossFromOtherRow: true,
+      subjectToThresholding: true,
+      sampled: false,
+    });
+  });
+
   it('options.retries により 2 ページ目の 5xx を再試行して全行がそろう', async () => {
     const fetchImpl = vi
       .fn()
