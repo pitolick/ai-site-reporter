@@ -374,17 +374,18 @@ export interface GroupedCounts {
   };
   /**
    * GA4 の応答に付いた注意。`dataLossFromOtherRow` が true なら、`(other)` 行にまとめられた分だけ
-   * キー別の数字が欠けている（期間を短くするなどして問い合わせを分ける）。
-   * `label` 指定時は、ラベルを決める問い合わせの注意も OR で合わせる。
+   * キー別の数字が欠けている（期間を短くするなどして問い合わせを分ける）。件数の問い合わせの値。
    */
   metadata: Ga4ReportMetadata;
   /** 件数の問い合わせで GA4 が返した総行数（最初のページの値）。 */
   rowCount: number;
-  /**
-   * ページングの途中で空ページが返り打ち切った（`rows` と `excluded` が不完全）。
-   * `label` 指定時は、ラベルを決める問い合わせが打ち切られた（`label` が欠けうる）ときも true。
-   */
+  /** 件数の問い合わせのページングの途中で空ページが返り打ち切った（`rows` と `excluded` が不完全）。 */
   truncated: boolean;
+  /**
+   * ラベルを決める問い合わせの注意と打ち切り。`label` を指定しなかったときは null。
+   * 件数とは別の問い合わせなので、ここが立っても件数は欠けていない（欠けうるのは `label` だけ）。
+   */
+  labelQuery: { metadata: Ga4ReportMetadata; truncated: boolean } | null;
 }
 
 function assertUnique(name: string, values: readonly string[]): void {
@@ -468,6 +469,7 @@ function emptyCounts(periods: readonly string[], columns: readonly string[]): Co
  * - 複数期間の応答から GA4 が自動で足す `dateRange` 列を列名で探し、期間ごとに分ける
  * - 返らなかった期間・列を 0 で埋める
  * - 全件をページングで取り、打ち切りを `truncated`、`(other)` による欠損を `metadata` で知らせる
+ *   （ラベルの問い合わせの分は `labelQuery` に分けて返す）
  *
  * ディメンションとメトリックの組み合わせによっては GA4 が 400 を返す（例: `eventName`
  * とアイテムスコープのディメンション）。その場合は `ApiError` を throw する。
@@ -668,18 +670,16 @@ export async function fetchGroupedCounts(
     columns,
     rows,
     excluded,
-    // ラベルの問い合わせに付いた注意・打ち切りも、返す結果（label）に掛かるので合わせて知らせる。
-    metadata: {
-      dataLossFromOtherRow:
-        report.metadata.dataLossFromOtherRow || labelReport?.metadata.dataLossFromOtherRow === true,
-      subjectToThresholding:
-        report.metadata.subjectToThresholding ||
-        labelReport?.metadata.subjectToThresholding === true,
-      sampled: report.metadata.sampled || labelReport?.metadata.sampled === true,
-    },
+    metadata: report.metadata,
     rowCount: report.rowCount,
-    truncated:
-      report.rows.length < report.rowCount ||
-      (labelReport !== null && labelReport.rows.length < labelReport.rowCount),
+    truncated: report.rows.length < report.rowCount,
+    // ラベル側の注意・打ち切りは件数の欠けと取り違えないよう、件数の項目に混ぜず分けて返す。
+    labelQuery:
+      labelReport === null
+        ? null
+        : {
+            metadata: labelReport.metadata,
+            truncated: labelReport.rows.length < labelReport.rowCount,
+          },
   };
 }
