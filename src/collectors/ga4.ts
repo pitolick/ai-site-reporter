@@ -142,13 +142,14 @@ export async function runReportAll(
   const metadata = { ...first.metadata };
   while (rows.length < first.rowCount) {
     const page = await fetchPage(rows.length);
-    if (page.rows.length === 0) break;
-    // rows.push(...page.rows) は 25 万行で引数の上限を超えるため 1 行ずつ積む。
-    for (const row of page.rows) rows.push(row);
     // どのページの応答に立っていても、集計全体に掛かる注意なので OR で集める。
+    // 打ち切る空ページの注意も落とさないよう、空ページの判定より先に集める。
     metadata.dataLossFromOtherRow ||= page.metadata.dataLossFromOtherRow;
     metadata.subjectToThresholding ||= page.metadata.subjectToThresholding;
     metadata.sampled ||= page.metadata.sampled;
+    if (page.rows.length === 0) break;
+    // rows.push(...page.rows) は 25 万行で引数の上限を超えるため 1 行ずつ積む。
+    for (const row of page.rows) rows.push(row);
   }
 
   return {
@@ -313,6 +314,7 @@ export interface NamedDateRange extends DateRange {
 export interface GroupedCountsParams {
   /**
    * 1〜4 個。名前は空・重複不可で、`date_range_` / `RESERVED_` で始めてはいけない。
+   * GA4 がまとめた行の印と見分けられなくなるため、`(other)` / `(not set)` も使えない。
    * 複数渡すと 1 回の問い合わせで期間ごとの件数を返す（前月比など）。
    * 先頭の期間がラベル選びの基準になる（`label` を参照）。
    */
@@ -411,6 +413,12 @@ function validateGroupedCountsParams(params: GroupedCountsParams): void {
     const reserved = RESERVED_DATE_RANGE_PREFIXES.find((prefix) => name.startsWith(prefix));
     if (reserved) {
       throw new RangeError(`dateRanges の name は ${reserved} で始めてはいけない（${name}）`);
+    }
+  }
+  for (const name of names) {
+    // 期間の列に GA4 が返す (other) / (not set) と区別できなくなる。
+    if (name === OTHER || name === NOT_SET) {
+      throw new RangeError(`dateRanges の name に ${name} は使えない`);
     }
   }
   assertUnique('dateRanges の name', names);

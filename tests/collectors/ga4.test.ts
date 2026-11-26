@@ -567,6 +567,36 @@ describe('runReportAll', () => {
     });
   });
 
+  it('打ち切った空ページに立った metadata の注意も落とさない', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          dimensionHeaders: [{ name: 'pagePath' }],
+          metricHeaders: [{ name: 'eventCount' }],
+          rows: [{ dimensionValues: [{ value: '/a/' }], metricValues: [{ value: '1' }] }],
+          rowCount: 3,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          dimensionHeaders: [{ name: 'pagePath' }],
+          metricHeaders: [{ name: 'eventCount' }],
+          metadata: { subjectToThresholding: true },
+        }),
+      );
+
+    const report = await runReportAll(
+      auth,
+      '123',
+      { dateRanges: [dateRange] },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+
+    expect(report.rows).toHaveLength(1);
+    expect(report.metadata.subjectToThresholding).toBe(true);
+  });
+
   it('options.retries により 2 ページ目の 5xx を再試行して全行がそろう', async () => {
     const fetchImpl = vi
       .fn()

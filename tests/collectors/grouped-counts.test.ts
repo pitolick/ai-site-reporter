@@ -869,6 +869,8 @@ describe('fetchGroupedCounts', () => {
         /RESERVED_/,
       ],
       ['期間名が空', { dateRanges: [{ ...thisMonth, name: '' }] }, /空/],
+      ['期間名が (other)', { dateRanges: [{ ...thisMonth, name: OTHER }] }, /\(other\)/],
+      ['期間名が (not set)', { dateRanges: [{ ...thisMonth, name: NOT_SET }] }, /\(not set\)/],
       ['keys が空', { keys: [] }, /keys/],
       ['metrics が空', { metrics: [], splitBy: undefined }, /metrics/],
       ['splitBy なのに metrics が 2 つ', { metrics: ['eventCount', 'totalUsers'] }, /splitBy/],
