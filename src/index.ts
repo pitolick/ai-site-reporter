@@ -5,17 +5,28 @@ export type { AuthOptions, ServiceAccountCredential } from './auth/service-accou
 export {
   GA4_SCOPE,
   NOT_SET,
+  OTHER,
+  MAX_DATE_RANGES,
+  eventParam,
+  itemParam,
   runReport,
   runReportAll,
   fetchEventCounts,
   fetchParameterBreakdown,
+  fetchGroupedCounts,
 } from './collectors/ga4.js';
 export type {
   Ga4Report,
+  Ga4ReportMetadata,
   Ga4Row,
   EventCount,
   ParameterBreakdown,
   RunReportAllRequest,
+  NamedDateRange,
+  GroupedCountsParams,
+  GroupedCountRow,
+  GroupedCounts,
+  CountsByPeriod,
 } from './collectors/ga4.js';
 export {
   SEARCH_CONSOLE_SCOPE,
